@@ -1,1 +1,29 @@
-./venv
+# Python / Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+
+# Environment Variables
+.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Node.js / Frontend
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Docker / Logs
+*.log
