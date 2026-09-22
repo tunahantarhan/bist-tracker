@@ -1,10 +1,7 @@
-version: '3.8'
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: bist_postgres
-    restart: always
+  db:
+    image: postgres:15-alpine
+    platform: linux/arm64
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgrespassword
@@ -16,13 +13,9 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: bist_redis
-    restart: always
+    platform: linux/arm64
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
 
 volumes:
   postgres_data:
-  redis_data:
