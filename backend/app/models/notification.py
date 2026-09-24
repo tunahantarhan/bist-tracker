@@ -1,21 +1,33 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime
+from __future__ import annotations
 from datetime import datetime
+from typing import TYPE_CHECKING
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.core.database import Base
 
-class NotificationLog(Base):
-    __tablename__ = "notification_logs"
+if TYPE_CHECKING:
+    from app.models.rule import Rule
 
-    id = Column(Integer, primary_key=True, index=True)
-    rule_id = Column(Integer, nullable=False)
-    message = Column(Text, nullable=False)
-    is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    rule_id: Mapped[int] = mapped_column(Integer, ForeignKey("rules.id", ondelete="CASCADE"), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Two way relationship with Rule model
+    rule: Mapped[Rule] = relationship("Rule", back_populates="notifications")
+
+# Alias for Notification model to avoid naming conflicts
+NotificationLog = Notification
 
 class NotificationChannel(Base):
     __tablename__ = "notification_channels"
 
-    id = Column(Integer, primary_key=True, index=True)
-    channel_type = Column(String, nullable=False)
-    destination = Column(String, nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    channel_type: Mapped[str] = mapped_column(String, nullable=False)
+    destination: Mapped[str] = mapped_column(String, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

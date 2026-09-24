@@ -1,9 +1,21 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { createChart, ColorType, LineSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
-export default function ChartWrapper() {
+interface CandleData {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface ChartWrapperProps {
+  candles: CandleData[];
+}
+
+export default function ChartWrapper({ candles }: ChartWrapperProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -12,31 +24,57 @@ export default function ChartWrapper() {
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#64748b',
+        textColor: '#94a3b8',
       },
       grid: {
-        vertLines: { color: '#f1f5f9' },
-        horzLines: { color: '#f1f5f9' },
+        vertLines: { color: 'rgba(30, 41, 59, 0.4)' },
+        horzLines: { color: 'rgba(30, 41, 59, 0.4)' },
       },
-      width: chartContainerRef.current.clientWidth,
-      height: 350,
+      crosshair: {
+        vertLine: { color: '#64748b', width: 1, style: 3 },
+        horzLine: { color: '#64748b', width: 1, style: 3 },
+      },
+      timeScale: {
+        borderColor: 'rgba(30, 41, 59, 0.8)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(30, 41, 59, 0.8)',
+      },
+      height: 380,
     });
 
-    // Güncel API: addSeries(LineSeries, options)
-    const lineSeries = chart.addSeries(LineSeries, { 
-      color: '#2563eb',
-      lineWidth: 2 
-    });
-    
-    lineSeries.setData([
-      { time: '2025-01-01', value: 120 },
-      { time: '2025-01-02', value: 125 },
-      { time: '2025-01-03', value: 122 },
-      { time: '2025-01-04', value: 130 },
-      { time: '2025-01-05', value: 128 },
-    ]);
+    // Hem v4 (addCandlestickSeries) hem de v5 (addSeries(CandlestickSeries)) uyumluluğu
+    const series = typeof (chart as any).addCandlestickSeries === 'function'
+      ? (chart as any).addCandlestickSeries({
+          upColor: '#10b981',
+          downColor: '#ef4444',
+          borderVisible: false,
+          wickUpColor: '#10b981',
+          wickDownColor: '#ef4444',
+        })
+      : chart.addSeries(CandlestickSeries, {
+          upColor: '#10b981',
+          downColor: '#ef4444',
+          borderVisible: false,
+          wickUpColor: '#10b981',
+          wickDownColor: '#ef4444',
+        });
 
-    chart.timeScale().fitContent();
+    if (candles && candles.length > 0) {
+      const sortedCandles = [...candles]
+        .sort((a, b) => a.time - b.time)
+        .map((c) => ({
+          time: c.time as any,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        }));
+      series.setData(sortedCandles);
+      chart.timeScale().fitContent();
+    }
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -45,12 +83,11 @@ export default function ChartWrapper() {
     };
 
     window.addEventListener('resize', handleResize);
-
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, []);
+  }, [candles]);
 
-  return <div ref={chartContainerRef} className="w-full h-[350px]" />;
+  return <div ref={chartContainerRef} className="w-full" />;
 }

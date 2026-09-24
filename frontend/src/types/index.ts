@@ -1,3 +1,16 @@
+export enum RuleType {
+  PRICE = "PRICE",
+  RSI = "RSI",
+  SMA = "SMA",
+}
+
+export enum RuleOperator {
+  GREATER_THAN = ">",
+  LESS_THAN = "<",
+  GREATER_OR_EQUAL = ">=",
+  LESS_OR_EQUAL = "<=",
+}
+
 export interface RuleParameters {
   period?: number;
   [key: string]: unknown;
