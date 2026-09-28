@@ -45,7 +45,7 @@ export default function ChartWrapper({ candles }: ChartWrapperProps) {
       height: 380,
     });
 
-    // Hem v4 (addCandlestickSeries) hem de v5 (addSeries(CandlestickSeries)) uyumluluğu
+    // Compatible with both versions of lightweight-charts
     const series = typeof (chart as any).addCandlestickSeries === 'function'
       ? (chart as any).addCandlestickSeries({
           upColor: '#10b981',
@@ -63,15 +63,16 @@ export default function ChartWrapper({ candles }: ChartWrapperProps) {
         });
 
     if (candles && candles.length > 0) {
-      const sortedCandles = [...candles]
-        .sort((a, b) => a.time - b.time)
-        .map((c) => ({
-          time: c.time as any,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        }));
+      const mappedCandles = candles.map((c) => ({
+        time: (new Date(c.time).getTime() / 1000) as any,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+
+      const sortedCandles = mappedCandles.sort((a, b) => a.time - b.time);
+      
       series.setData(sortedCandles);
       chart.timeScale().fitContent();
     }

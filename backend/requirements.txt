@@ -12,3 +12,5 @@ yfinance>=0.2.37
 pandas-ta>=0.3.14b0
 apscheduler>=3.10.4
 python-dotenv>=1.0.1
+passlib[bcrypt]
+pyjwt

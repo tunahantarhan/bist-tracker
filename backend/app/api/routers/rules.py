@@ -25,18 +25,22 @@ async def create_rule(rule_in: RuleCreate, db: AsyncSession = Depends(get_db)):
 @router.get("/market/{symbol}")
 async def get_market_data(symbol: str):
     try:
-        df = await provider.fetch_data(symbol=symbol, period="5d", interval="15m")
-        if df.empty:
+        # Datas are fetched every 15 minutes
+        data = await provider.fetch_stock_data(symbol=symbol, period="5d", interval="15m")
+        
+        # Instead of DataFrame, we check standart Python list for empty data
+        if not data:
             raise HTTPException(status_code=404, detail="Hisse verisi bulunamadı")
         
-        last_close = float(df["Close"].iloc[-1])
-        prev_close = float(df["Close"].iloc[-2]) if len(df) > 1 else last_close
+        # Since the data is in JSON format (dict), we access it by index
+        last_close = float(data[-1]["Close"])
+        prev_close = float(data[-2]["Close"]) if len(data) > 1 else last_close
         change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
 
         candles = []
-        for index, row in df.iterrows():
+        for row in data:
             candles.append({
-                "time": int(index.timestamp()),
+                "time": row["Date"], # Data row where the timestamp is stored
                 "open": float(row["Open"]),
                 "high": float(row["High"]),
                 "low": float(row["Low"]),

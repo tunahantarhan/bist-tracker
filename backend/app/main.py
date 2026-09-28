@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api.routers import rules
+from app.api.routers import rules, auth
 from app.scheduler.main import start_scheduler
 
 @asynccontextmanager
@@ -26,7 +26,9 @@ app.add_middleware(
 )
 
 # Router connection for API endpoints
+app.include_router(auth.router, prefix="/api/v1")  # Auth router eklendi
 app.include_router(rules.router, prefix="/api/v1")
+app.include
 
 @app.get("/health")
 async def health_check():

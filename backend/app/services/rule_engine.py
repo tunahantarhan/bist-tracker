@@ -88,7 +88,7 @@ class RuleEngine:
                 # 3. If the state is changed, update the object for the database record.
                 if new_state != rule.last_state:
                     rule.last_state = new_state
-                    # Not: Bu aşamada SQLAlchemy session.commit() çağrılacak bir repository katmanı kullanılmalıdır.
+                    # P.S: At this point, a repository layer should be used that will call SQLAlchemy session.commit(). 
 
                 # 4. Notification decision
                 if should_notify:

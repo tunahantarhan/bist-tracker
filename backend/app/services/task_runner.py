@@ -2,7 +2,7 @@ import asyncio
 from typing import List, Dict, Any
 from sqlalchemy.future import select
 
-# Model, provider ve engine importları (Dizin yapısına göre)
+# Model, provider and engine imports (according to directory structure)
 from app.models.rule import Rule
 from app.providers.yfinance_provider import YFinanceProvider
 from app.services.rule_engine import RuleEngine
@@ -16,38 +16,38 @@ class RuleTaskRunner:
     async def execute_rule_checks() -> None:
         async with AsyncSessionLocal() as db:
             try:
-                # Repository üzerinden aktif kuralları çek
+                # Fetching of active rules from the repository
                 rule_repo = RuleRepository(db)
                 active_rules = await rule_repo.get_active_rules()
 
                 if not active_rules:
                     return
 
-                # API çağrılarını minimize etmek için kuralları sembole göre grupla
+                # To minimize the API calls, group the rules by symbol
                 rules_by_symbol: Dict[str, List[Any]] = {}
                 for rule in active_rules:
                     if rule.symbol not in rules_by_symbol:
                         rules_by_symbol[rule.symbol] = []
                     rules_by_symbol[rule.symbol].append(rule)
 
-                # Veri sağlayıcıyı başlat
+                # Start the data provider                
                 provider = YFinanceProvider()
                 
-                # E-posta servisi entegrasyonu tamamlandığında NotificationService'e enjekte edilebilir
+                # E-mail service integration can be injected into NotificationService once completed
                 # notification_service = NotificationService(db=db, email_service=...)
 
                 for symbol, rules in rules_by_symbol.items():
                     try:
-                        # 2. Asenkron OHLCV verisini çek
+                        # 2. Fetch asynchronous OHLCV data
                         df = await provider.fetch_historical_data(symbol, period="1mo", interval="1d")
 
-                        # 3. Kural motorunu çalıştır
+                        # 3. Run the rule engine
                         triggered_notifications = RuleEngine.process_symbol_rules(df, rules)
 
-                        # 4. State değişimlerini (last_state) DB'ye yansıt
+                        # 4. Reflect state changes (last_state) to the DB
                         await db.commit()
-
-                        # 5. Bildirimleri gönder
+                        
+                        # 5. Send notifications (e.g., email, push notification) if any rule is triggered
                         if triggered_notifications:
                             for notif in triggered_notifications:
                                 print(f"BİLDİRİM TETİKLENDİ: {notif['message']}")
@@ -59,7 +59,7 @@ class RuleTaskRunner:
                                 # )
 
                     except Exception as e:
-                        # Belirli bir sembolde hata çıksa bile diğerlerine devam et
+                        # Even if there is an error in a specific symbol, continue with the others
                         print(f"[{symbol}] İşleme hatası: {e}")
 
             except Exception as e:

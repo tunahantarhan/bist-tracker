@@ -7,7 +7,7 @@ class RuleBase(BaseModel):
     rule_type: str
     operator: str
     threshold: float
-    # İndikatöre özel dinamik parametreler (örn: period: 14) JSONB olarak tutulur
+    # Dynamic parameters specific to the indicator (e.g., period: 14) are stored as JSONB
     parameters: Dict[str, Any] = {}
 
 class RuleCreate(RuleBase):

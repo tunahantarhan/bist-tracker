@@ -4,7 +4,7 @@ from app.services.task_runner import RuleTaskRunner
 scheduler = AsyncIOScheduler()
 
 def start_scheduler():
-    # 15 dakikada bir çalışacak ana değerlendirme görevi
+    # Main evaluation task that will run every 15 minutes 
     scheduler.add_job(
         RuleTaskRunner.execute_rule_checks, 
         'interval', 
