@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 from typing import Optional
-import jwt
+from jose import jwt
 from passlib.context import CryptContext
 
 # Secret key and algorithm (to be moved to .env file in the future)
-SECRET_KEY = "super-secret-bist-key-for-development-only"
+SECRET_KEY = "bist_rule_engine_super_secret_key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 hafta
 

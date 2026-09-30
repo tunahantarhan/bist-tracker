@@ -20,10 +20,12 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
             detail="Bu e-posta adresi zaten kullanılıyor."
         )
     
-    # 2. Create a new user (Legal acceptance time is processed here)
+    # 2. Create a new user
     new_user = User(
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
+        first_name=user_in.first_name,
+        last_name=user_in.last_name,
         terms_accepted_at=datetime.now(timezone.utc)
     )
     
@@ -35,11 +37,9 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 async def login(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
-    # 1. Find the user from database
     result = await db.execute(select(User).where(User.email == user_in.email))
     user = result.scalars().first()
     
-    # 2. Password verification 
     if not user or not verify_password(user_in.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,6 +47,5 @@ async def login(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
         
-    # 3. Successful login: JWT Token generation
     access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}

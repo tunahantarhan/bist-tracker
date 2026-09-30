@@ -1,26 +1,24 @@
-import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google'
-import './globals.css'
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
 
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ['latin'],
-  variable: '--font-jakarta',
-})
+const inter = Inter({ subsets: ["latin"] });
 
-const jetbrains = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-jetbrains',
-})
+export const metadata: Metadata = {
+  title: "BIST Tracker & Algo Scoring",
+  description: "Matematiksel koşullara dayalı BIST hisse takip platformu",
+};
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode
-}) {
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="tr" className={`${jakarta.variable} ${jetbrains.variable}`}>
-      <body className="font-sans antialiased bg-[#0b0e14] text-slate-200">
+    <html lang="tr">
+      <body className={`${inter.className} antialiased bg-slate-950 text-slate-50 min-h-screen`}>
         {children}
       </body>
     </html>
-  )
+  );
 }

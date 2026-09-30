@@ -6,14 +6,16 @@ from sqlalchemy.sql import text
 from app.core.database import Base
 
 class SubscriptionTier(str, enum.Enum):
-    FREE = "FREE"         # Ücretsiz: 3 Hisse
-    STANDARD = "STANDARD" # Standart: 10 Hisse
-    PREMIUM = "PREMIUM"   # Premium: 50 Hisse
+    FREE = "FREE"         # Free: 3 Stocks
+    STANDARD = "STANDARD" # Standard: 10 Stocks
+    PREMIUM = "PREMIUM"   # Premium: 50 Stocks
 
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    first_name: Mapped[str | None] = mapped_column(String(50), nullable=True) # or a proper string definition
+    last_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

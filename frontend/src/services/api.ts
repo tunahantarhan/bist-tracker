@@ -2,6 +2,21 @@ import { Rule } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
 
+// Helper function to safely retrieve the token from localStorage
+const getAuthHeaders = () => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+};
+
 export interface MarketData {
   symbol: string;
   current_price: number;
@@ -16,7 +31,10 @@ export interface MarketData {
 }
 
 export async function fetchRules(): Promise<Rule[]> {
-  const res = await fetch(`${API_BASE_URL}/rules`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE_URL}/rules`, { 
+    headers: getAuthHeaders(),
+    cache: 'no-store' 
+  });
   if (!res.ok) throw new Error('API yanıt vermedi');
   return await res.json();
 }
@@ -26,7 +44,7 @@ export async function createRule(
 ): Promise<Rule> {
   const res = await fetch(`${API_BASE_URL}/rules`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Kural eklenemedi');
@@ -34,7 +52,50 @@ export async function createRule(
 }
 
 export async function fetchMarketData(symbol: string): Promise<MarketData> {
-  const res = await fetch(`${API_BASE_URL}/market/${symbol}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE_URL}/market/${symbol}`, { 
+    headers: getAuthHeaders(),
+    cache: 'no-store' 
+  });
   if (!res.ok) throw new Error('Piyasa verisi alınamadı');
+  return await res.json();
+}
+
+export async function fetchWatchlist(): Promise<{ id: number; symbol: string }[]> {
+  const res = await fetch(`${API_BASE_URL}/watchlist/`, { 
+    headers: getAuthHeaders(),
+    cache: 'no-store' 
+  });
+  if (!res.ok) throw new Error('Takip listesi alınamadı');
+  return await res.json();
+}
+
+export async function addToWatchlist(symbol: string) {
+  const res = await fetch(`${API_BASE_URL}/watchlist/${symbol}`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || 'Hisse eklenemedi');
+  }
+  return await res.json();
+}
+
+export async function removeFromWatchlist(symbol: string) {
+  const res = await fetch(`${API_BASE_URL}/watchlist/${symbol}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Hisse silinemedi');
+  return await res.json();
+}
+
+// TODO: When the stock filtering will be done from admin panel, this section will be removed.
+export async function fetchUniverse(): Promise<{ symbol: string; name: string }[]> {
+  const res = await fetch(`${API_BASE_URL}/market/universe`, { 
+    headers: getAuthHeaders(),
+    cache: 'no-store' // It's being forced to no-store to get in front of the problematic cache
+  });
+  if (!res.ok) throw new Error('Hisse evreni alınamadı');
   return await res.json();
 }

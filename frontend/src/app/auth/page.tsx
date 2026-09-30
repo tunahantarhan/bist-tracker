@@ -1,26 +1,43 @@
 'use client';
 
 import { useState } from 'react';
-import { ShieldAlert, TrendingUp, Lock, Mail, ChevronRight } from 'lucide-react';
+import { ShieldAlert, TrendingUp, Lock, Mail, ChevronRight, User, CheckCircle2 } from 'lucide-react';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  
+  // Custom Notification (Toast) State
+  const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!isLogin && !acceptedTerms) {
-      alert("Sistem yatırım tavsiyesi vermemekte, yalnızca belirlenmiş matematiksel kurallara göre bilgi ve bildirim sağlamaktadır. Bu uyarıyı kabul etmelisiniz.");
+      showToast("Sisteme kayıt olmak için yasal uyarıyı kabul etmelisiniz.", "error");
       return;
     }
 
     const endpoint = isLogin ? '/api/v1/auth/login' : '/api/v1/auth/register';
     const payload = isLogin 
       ? { email, password } 
-      : { email, password, terms_accepted: acceptedTerms };
+      : { 
+          email, 
+          password, 
+          first_name: firstName, 
+          last_name: lastName, 
+          terms_accepted: acceptedTerms 
+        };
 
     try {
       const res = await fetch(`http://127.0.0.1:8000${endpoint}`, {
@@ -31,30 +48,45 @@ export default function AuthPage() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.detail || 'İşlem başarısız');
+        const errorMsg = Array.isArray(errorData.detail) 
+          ? errorData.detail.map((err: any) => err.msg).join(', ') 
+          : errorData.detail || 'İşlem başarısız oldu.';
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
       
       if (isLogin) {
-        // JWT token tarayıcıda saklanıyor
+        // TODO: Untill /me endpoint is implemented, store first and last name in local storage for profile URL.
+        if (data.first_name && data.last_name) {
+            localStorage.setItem('user_slug', `${data.first_name.toLowerCase()}-${data.last_name.toLowerCase()}`);
+        }
         localStorage.setItem('access_token', data.access_token);
-        window.location.href = '/dashboard'; // Başarılı girişte ana ekrana yönlendir
+        window.location.href = '/dashboard';
       } else {
-        alert("Kayıt başarılı! Şimdi giriş yapabilirsiniz.");
+        showToast("Kayıt başarılı! Şimdi giriş yapabilirsiniz.", "success");
         setIsLogin(true);
       }
     } catch (error: any) {
-      alert(error.message);
+      showToast(error.message, "error");
     }
   };
 
   return (
-    <div className="min-h-screen flex bg-[#0b0e14] text-slate-200">
+    <div className="min-h-screen flex bg-[#0b0e14] text-slate-200 relative overflow-hidden">
       
-      {/* Sol Panel - Marka ve Değer Önermesi */}
+      {/* Toast Notifications */}
+      {toast && (
+        <div className={`fixed bottom-8 right-8 z-50 flex items-center p-4 rounded-xl shadow-2xl border backdrop-blur-md transition-all duration-300 animate-in slide-in-from-bottom-5 ${
+          toast.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+        }`}>
+          {toast.type === 'success' ? <CheckCircle2 className="h-5 w-5 mr-3 shrink-0" /> : <ShieldAlert className="h-5 w-5 mr-3 shrink-0" />}
+          <p className="text-sm font-medium">{toast.message}</p>
+        </div>
+      )}
+
+      {/* Left Panel - Brand and Feature Showcase */}
       <div className="hidden lg:flex w-1/2 flex-col justify-between p-12 bg-[#12161f] border-r border-slate-800/80 relative overflow-hidden">
-        {/* Dekoratif Arka Plan Işığı */}
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
           <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-blue-600/10 blur-[120px] rounded-full"></div>
         </div>
@@ -91,7 +123,6 @@ export default function AuthPage() {
           </div>
         </div>
 
-        {/* Sol Alt Yasal Uyarı Sabiti */}
         <div className="relative z-10 flex items-start space-x-3 text-slate-500 bg-slate-900/50 p-4 rounded-xl border border-slate-800">
           <ShieldAlert className="h-5 w-5 shrink-0 text-amber-500" />
           <p className="text-xs leading-relaxed">
@@ -100,7 +131,7 @@ export default function AuthPage() {
         </div>
       </div>
 
-      {/* Sağ Panel - Form Alanı */}
+      {/* Right Panel - Form Section */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12">
         <div className="w-full max-w-md space-y-8">
           
@@ -113,19 +144,20 @@ export default function AuthPage() {
             </p>
           </div>
 
-          {/* Tab Geçişi */}
           <div className="flex p-1 space-x-1 bg-slate-900/80 border border-slate-800 rounded-lg">
             <button
+              type="button"
               onClick={() => setIsLogin(true)}
-              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all ${
+              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all outline-none ${
                 isLogin ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               Giriş Yap
             </button>
             <button
+              type="button"
               onClick={() => setIsLogin(false)}
-              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all ${
+              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all outline-none ${
                 !isLogin ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -134,6 +166,40 @@ export default function AuthPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            
+            {!isLogin && (
+              <div className="flex space-x-4">
+                <div className="space-y-1.5 w-1/2">
+                  <label className="text-sm font-medium text-slate-300">İsim</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                    <input
+                      type="text"
+                      required={!isLogin}
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="İsim"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900/50 py-2.5 pl-10 pr-4 text-sm text-slate-200 placeholder:text-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5 w-1/2">
+                  <label className="text-sm font-medium text-slate-300">Soyisim</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                    <input
+                      type="text"
+                      required={!isLogin}
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      placeholder="Soyisim"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900/50 py-2.5 pl-10 pr-4 text-sm text-slate-200 placeholder:text-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-300">E-posta Adresi</label>
               <div className="relative">
@@ -169,7 +235,6 @@ export default function AuthPage() {
               </div>
             </div>
 
-            {/* Yasal Onay Alanı - Kayıt olurken ZORUNLU */}
             {!isLogin && (
               <div className="flex items-start space-x-3 pt-2">
                 <div className="flex items-center h-5">
@@ -179,7 +244,7 @@ export default function AuthPage() {
                     required
                     checked={acceptedTerms}
                     onChange={(e) => setAcceptedTerms(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-900"
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-900 cursor-pointer"
                   />
                 </div>
                 <label htmlFor="terms" className="text-xs text-slate-400 leading-relaxed cursor-pointer">
@@ -196,13 +261,6 @@ export default function AuthPage() {
               <ChevronRight className="h-4 w-4" />
             </button>
           </form>
-
-          {/* Alt Footer Sadece Mobilde (Çünkü solda kayboluyor) */}
-          <div className="lg:hidden text-center mt-8 pt-6 border-t border-slate-800/80">
-            <p className="text-[10px] text-slate-500 uppercase tracking-widest">
-              Yatırım Danışmanlığı Kapsamında Değildir
-            </p>
-          </div>
 
         </div>
       </div>

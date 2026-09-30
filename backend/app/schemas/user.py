@@ -7,6 +7,8 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     terms_accepted: bool
+    first_name: str
+    last_name: str
 
     @field_validator('terms_accepted')
     @classmethod
@@ -24,6 +26,8 @@ class UserResponse(UserBase):
     is_active: bool
     tier: str
     terms_accepted_at: datetime
+    first_name: str
+    last_name: str
     
     class Config:
         from_attributes = True
