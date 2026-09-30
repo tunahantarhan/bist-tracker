@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { IndicatorOverlay } from '@/services/api';
 
 interface CandleData {
-  time: number;
+  time: string | number;
   open: number;
   high: number;
   low: number;
@@ -13,9 +14,11 @@ interface CandleData {
 
 interface ChartWrapperProps {
   candles: CandleData[];
+  indicators?: IndicatorOverlay[];
+  height?: number;
 }
 
-export default function ChartWrapper({ candles }: ChartWrapperProps) {
+export default function ChartWrapper({ candles, indicators = [], height = 380 }: ChartWrapperProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,11 +45,11 @@ export default function ChartWrapper({ candles }: ChartWrapperProps) {
       rightPriceScale: {
         borderColor: 'rgba(30, 41, 59, 0.8)',
       },
-      height: 380,
+      height,
     });
 
-    // Compatible with both versions of lightweight-charts
-    const series = typeof (chart as any).addCandlestickSeries === 'function'
+    // 1. Add Candlestick Series
+    const candleSeries = typeof (chart as any).addCandlestickSeries === 'function'
       ? (chart as any).addCandlestickSeries({
           upColor: '#10b981',
           downColor: '#ef4444',
@@ -64,18 +67,52 @@ export default function ChartWrapper({ candles }: ChartWrapperProps) {
 
     if (candles && candles.length > 0) {
       const mappedCandles = candles.map((c) => ({
-        time: (new Date(c.time).getTime() / 1000) as any,
+        time: Math.floor(new Date(c.time).getTime() / 1000) as any,
         open: c.open,
         high: c.high,
         low: c.low,
         close: c.close,
       }));
 
-      const sortedCandles = mappedCandles.sort((a, b) => a.time - b.time);
-      
-      series.setData(sortedCandles);
-      chart.timeScale().fitContent();
+      // Deduplicate and sort timestamps in ascending order
+      const uniqueCandles = Array.from(
+        new Map(mappedCandles.map((item) => [item.time, item])).values()
+      ).sort((a, b) => a.time - b.time);
+
+      candleSeries.setData(uniqueCandles);
     }
+
+    // 2. Add Indicator Overlay Lines (MA, Bollinger Bands, etc.)
+    if (indicators && indicators.length > 0) {
+      indicators.forEach((ind) => {
+        const lineSeries = typeof (chart as any).addLineSeries === 'function'
+          ? (chart as any).addLineSeries({
+              color: ind.color,
+              lineWidth: 2,
+              priceLineVisible: false,
+              lastValueVisible: true,
+            })
+          : chart.addSeries(LineSeries, {
+              color: ind.color,
+              lineWidth: 2,
+              priceLineVisible: false,
+              lastValueVisible: true,
+            });
+
+        const mappedLine = ind.data.map((d) => ({
+          time: Math.floor(new Date(d.time).getTime() / 1000) as any,
+          value: d.value,
+        }));
+
+        const uniqueLine = Array.from(
+          new Map(mappedLine.map((item) => [item.time, item])).values()
+        ).sort((a, b) => a.time - b.time);
+
+        lineSeries.setData(uniqueLine);
+      });
+    }
+
+    chart.timeScale().fitContent();
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -88,7 +125,28 @@ export default function ChartWrapper({ candles }: ChartWrapperProps) {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [candles]);
+  }, [candles, indicators, height]);
 
-  return <div ref={chartContainerRef} className="w-full" />;
+  return (
+    <div className="relative w-full">
+      {/* Indicator Color Legend */}
+      {indicators && indicators.length > 0 && (
+        <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-2 pointer-events-none">
+          {indicators.map((ind) => (
+            <div
+              key={ind.name}
+              className="flex items-center space-x-1.5 rounded bg-[#0b0e14]/85 border border-slate-800 px-2 py-0.5 text-[11px] font-mono text-slate-200 backdrop-blur-sm"
+            >
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{ backgroundColor: ind.color }}
+              />
+              <span>{ind.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div ref={chartContainerRef} className="w-full" />
+    </div>
+  );
 }

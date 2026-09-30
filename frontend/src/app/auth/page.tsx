@@ -57,11 +57,12 @@ export default function AuthPage() {
       const data = await res.json();
       
       if (isLogin) {
-        // TODO: Untill /me endpoint is implemented, store first and last name in local storage for profile URL.
+        // Store user slug, access token, and admin status in localStorage
         if (data.first_name && data.last_name) {
-            localStorage.setItem('user_slug', `${data.first_name.toLowerCase()}-${data.last_name.toLowerCase()}`);
+          localStorage.setItem('user_slug', `${data.first_name.toLowerCase()}-${data.last_name.toLowerCase()}`);
         }
         localStorage.setItem('access_token', data.access_token);
+        localStorage.setItem('is_admin', data.is_admin ? 'true' : 'false');
         window.location.href = '/dashboard';
       } else {
         showToast("Kayıt başarılı! Şimdi giriş yapabilirsiniz.", "success");
@@ -148,7 +149,7 @@ export default function AuthPage() {
             <button
               type="button"
               onClick={() => setIsLogin(true)}
-              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all outline-none ${
+              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all outline-none cursor-pointer ${
                 isLogin ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -157,7 +158,7 @@ export default function AuthPage() {
             <button
               type="button"
               onClick={() => setIsLogin(false)}
-              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all outline-none ${
+              className={`w-1/2 py-2 text-sm font-medium rounded-md transition-all outline-none cursor-pointer ${
                 !isLogin ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -255,7 +256,7 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              className="w-full flex items-center justify-center space-x-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 transition-colors shadow-[0_0_12px_rgba(37,99,235,0.3)]"
+              className="w-full flex items-center justify-center space-x-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 transition-colors shadow-[0_0_12px_rgba(37,99,235,0.3)] cursor-pointer"
             >
               <span>{isLogin ? 'Sisteme Giriş Yap' : 'Hesabımı Oluştur'}</span>
               <ChevronRight className="h-4 w-4" />

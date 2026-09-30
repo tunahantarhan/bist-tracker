@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin, Token, UserResponse
+from app.schemas.user import UserCreate, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -35,7 +35,7 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     
     return new_user
 
-@router.post("/login", response_model=Token)
+@router.post("/login")
 async def login(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == user_in.email))
     user = result.scalars().first()
@@ -48,4 +48,12 @@ async def login(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
         )
         
     access_token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    # Return token along with user metadata and admin privileges
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "is_admin": bool(getattr(user, "is_admin", False))
+    }

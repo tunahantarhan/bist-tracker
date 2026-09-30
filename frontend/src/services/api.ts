@@ -17,17 +17,41 @@ const getAuthHeaders = () => {
   return headers;
 };
 
+export interface RuleBreakdownItem {
+  id: number;
+  name: string;
+  condition_text: string;
+  is_met: boolean;
+  score_impact: number;
+  earned_score: number;
+  current_value?: number;
+  target_value?: number;
+  error?: string;
+}
+
+export interface IndicatorOverlay {
+  name: string;
+  color: string;
+  data: {
+    time: string | number;
+    value: number;
+  }[];
+}
+
 export interface MarketData {
   symbol: string;
   current_price: number;
   change_pct: number;
   candles: {
-    time: number;
+    time: string | number;
     open: number;
     high: number;
     low: number;
     close: number;
   }[];
+  score?: number;
+  rules_breakdown?: RuleBreakdownItem[];
+  indicators?: IndicatorOverlay[];
 }
 
 export async function fetchRules(): Promise<Rule[]> {
@@ -90,11 +114,10 @@ export async function removeFromWatchlist(symbol: string) {
   return await res.json();
 }
 
-// TODO: When the stock filtering will be done from admin panel, this section will be removed.
 export async function fetchUniverse(): Promise<{ symbol: string; name: string }[]> {
   const res = await fetch(`${API_BASE_URL}/market/universe`, { 
     headers: getAuthHeaders(),
-    cache: 'no-store' // It's being forced to no-store to get in front of the problematic cache
+    cache: 'no-store'
   });
   if (!res.ok) throw new Error('Hisse evreni alınamadı');
   return await res.json();

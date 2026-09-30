@@ -152,3 +152,20 @@
   scrollbar-width: thin;
   scrollbar-color: #1e293b transparent;
 }
+
+/* Dark theme scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #12161f;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+

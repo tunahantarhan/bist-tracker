@@ -5,7 +5,7 @@ import ChartWrapper from '@/components/charts/ChartWrapper';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import StockSearch from '@/components/ui/StockSearch';
 import { fetchMarketData, MarketData, fetchWatchlist, addToWatchlist, removeFromWatchlist } from '@/services/api';
-import { User, TrendingUp, TrendingDown, RefreshCw, CheckCircle2, XCircle, AlertCircle, Activity, Trash2, LogOut } from 'lucide-react';
+import { User, TrendingUp, TrendingDown, RefreshCw, CheckCircle2, XCircle, AlertCircle, Activity, Trash2, LogOut, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
   DropdownMenu,
@@ -18,8 +18,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import StockTicker from '@/components/ui/StockTicker';
 
-// Company Name Mapping for Display Purposes
-// TODO: Will be selected from backend in the future, currently hardcoded for MVP
 const TICKER_NAMES: Record<string, string> = {
   "THYAO": "Türk Hava Yolları A.O.",
   "KCHOL": "Koç Holding A.Ş.",
@@ -33,18 +31,14 @@ const TICKER_NAMES: Record<string, string> = {
   "EREGL": "Erdemir Ereğli Demir Çelik"
 };
 
-// Mock rule analysis results for MVP (will be dynamic when backend rule engine is implemented)
-const MOCK_RULE_RESULTS = [
-  { id: 1, condition: 'RSI (14) Aşırı Satım Bölgesinde (< 30)', isMet: true, weight: 25 },
-  { id: 2, condition: 'Fiyat 50 Günlük SMA Üzerinde', isMet: true, weight: 25 },
-];
-
 export default function DashboardPage() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
+  const [stockScores, setStockScores] = useState<Record<string, number>>({});
   const [loadingMarket, setLoadingMarket] = useState<boolean>(false);
 
   // 1. Auth Guard and Watchlist Initialization
@@ -56,6 +50,7 @@ export default function DashboardPage() {
     }
     
     setIsAuthenticated(true);
+    setIsAdmin(localStorage.getItem('is_admin') === 'true');
     loadUserWatchlist();
   }, [router]);
 
@@ -64,7 +59,6 @@ export default function DashboardPage() {
       const data = await fetchWatchlist();
       const symbols = data.map((item: any) => item.symbol);
       setWatchlist(symbols);
-      // If the user has stocks in their watchlist, automatically select the first one
       if (symbols.length > 0 && !selectedSymbol) {
         setSelectedSymbol(symbols[0]);
       }
@@ -78,15 +72,12 @@ export default function DashboardPage() {
     try {
       if (isAdded) {
         await removeFromWatchlist(symbol);
-        
-        // List is getting updated in real-time
         const updatedList = watchlist.filter(s => s !== symbol);
         setWatchlist(updatedList);
         
-        // If the removed stock is currently selected, select the next one in the list
         if (selectedSymbol === symbol) {
           if (updatedList.length > 0) {
-            setSelectedSymbol(updatedList[0]); // Top stock is automatically selected
+            setSelectedSymbol(updatedList[0]);
           } else {
             setSelectedSymbol(null);
             setMarketData(null);
@@ -102,7 +93,7 @@ export default function DashboardPage() {
     }
   };
 
-  // 3. When the selected stock changes, fetch its market data
+  // 3. Fetch market data and dynamic rule score for the selected stock
   useEffect(() => {
     if (selectedSymbol && isAuthenticated) {
       const loadMarket = async () => {
@@ -110,6 +101,9 @@ export default function DashboardPage() {
         try {
           const data = await fetchMarketData(selectedSymbol);
           setMarketData(data);
+          if (data.score !== undefined) {
+            setStockScores(prev => ({ ...prev, [selectedSymbol]: data.score! }));
+          }
         } catch (err) {
           console.error(err);
         } finally {
@@ -120,16 +114,15 @@ export default function DashboardPage() {
     }
   }, [selectedSymbol, isAuthenticated]);
 
-  // Block page reload untill authentication is verified
   if (!isAuthenticated) return <div className="min-h-screen bg-[#0b0e14]" />;
+
+  const currentScore = marketData?.score ?? 0;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0e14] text-slate-200">
       {/* Top Navigation */}
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#0b0e14]/80 backdrop-blur-md px-8 py-4 flex items-center justify-between">
         <div className="flex items-center space-x-6">
-          
-          {/* Logo Section: Landing Page Navigation */}
           <div className="flex items-center space-x-3 cursor-pointer group" onClick={() => router.push('/')}>
             <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-[0_0_12px_#2563eb] transition-transform duration-300 group-hover:scale-105">
               <span className="font-mono text-sm font-black text-white">B</span>
@@ -143,42 +136,54 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center space-x-4">
+          {isAdmin && (
+            <button
+              onClick={() => router.push('/admin')}
+              className="flex items-center space-x-2 rounded-lg bg-emerald-600/15 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)] hover:bg-emerald-600/25 hover:border-emerald-500/50 hover:text-emerald-300 transition-all duration-200 cursor-pointer"
+            >
+              <ShieldCheck className="h-4 w-4" />
+              <span>Admin Paneli</span>
+            </button>
+          )}
+
           <NotificationBell />
           
-          {/* User Icon Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger className="h-8 w-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center cursor-pointer hover:bg-slate-700 hover:border-blue-500/50 hover:shadow-[0_0_8px_rgba(37,99,235,0.2)] transition-all duration-300 group outline-none">
               <User className="h-4 w-4 text-slate-300 group-hover:text-blue-400 transition-colors" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 border-slate-800 bg-[#12161f] text-slate-200">
+            <DropdownMenuContent align="end" className="w-56 border-slate-800 bg-[#12161f] text-slate-200 p-1.5">
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="text-xs text-slate-400">Hesabım</DropdownMenuLabel>
-                <DropdownMenuSeparator className="bg-slate-800" />
+                <DropdownMenuLabel className="text-xs text-slate-400 px-2 py-1.5">Hesabım</DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-slate-800/80 my-1" />
+                
                 <DropdownMenuItem 
                   onClick={() => {
                     const slug = localStorage.getItem('user_slug') || 'demo-kullanici';
                     router.push(`/kullanici/${slug}`);
                   }} 
-                  className="cursor-pointer focus:bg-slate-800 focus:text-slate-100"
+                  className="cursor-pointer py-2 px-2.5 rounded-md text-slate-200 transition-all duration-150"
                 >
                   <User className="mr-2 h-4 w-4 text-slate-400" />
                   <span>Profil</span>
                 </DropdownMenuItem>
+
                 <DropdownMenuItem 
+                  variant="destructive"
                   onClick={() => {
                     localStorage.removeItem('access_token');
                     localStorage.removeItem('user_slug');
+                    localStorage.removeItem('is_admin');
                     router.push('/auth');
                   }} 
-                  className="cursor-pointer text-rose-400 focus:bg-rose-500/10 focus:text-rose-300"
+                  className="mt-1 cursor-pointer py-2 px-2.5 rounded-md bg-rose-950/30 text-rose-400 border border-rose-500/10 hover:!bg-rose-900/45 data-[highlighted]:!bg-rose-900/45 data-[highlighted]:!text-rose-200 data-[highlighted]:border-rose-500/30 transition-all duration-200"
                 >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Çıkış Yap</span>
+                  <LogOut className="mr-2 h-4 w-4 text-rose-400" />
+                  <span className="font-medium">Çıkış Yap</span>
                 </DropdownMenuItem>
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-
         </div>
       </header>
 
@@ -207,6 +212,7 @@ export default function DashboardPage() {
               ) : (
                 watchlist.map((symbol) => {
                   const isSelected = selectedSymbol === symbol;
+                  const symScore = stockScores[symbol];
                   return (
                     <div
                       key={symbol}
@@ -215,7 +221,6 @@ export default function DashboardPage() {
                         isSelected ? 'bg-slate-800/40 border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent hover:bg-slate-850/50'
                       }`}
                     >
-                      {/* Stock Symbol and Company Name */}
                       <div className="flex items-center space-x-4">
                         <span className="relative flex h-3 w-3 shrink-0">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -223,28 +228,23 @@ export default function DashboardPage() {
                         </span>
                         
                         <div className="flex flex-col items-start justify-center mt-0.5">
-                          {/* Stock Symbol */}
                           <span className="text-xs font-mono font-bold text-slate-200 uppercase tracking-widest bg-slate-800/80 border border-slate-700/50 px-2 py-0.5 rounded transition-colors group-hover:border-blue-500/30 group-hover:text-blue-400">
                             {symbol}
                           </span>
-                          
-                          {/* Company Name */}
                           <span className="text-[11px] font-medium text-slate-500 mt-1.5 truncate max-w-[130px] group-hover:text-slate-400 transition-colors">
                             {TICKER_NAMES[symbol] || symbol}
                           </span>
                         </div>
                       </div>
                       
-                      {/* Score and Delete Button */}
-                      <div className="relative flex items-center justify-end min-w-[70px]">
-                        
-                        {/* Score Field */}
+                      <div className="relative flex items-center justify-end min-w-[80px]">
                         <div className="text-right transition-all duration-300 transform group-hover:-translate-x-8">
-                          <div className="text-sm font-bold font-mono text-emerald-400">95/100</div>
+                          <div className="text-sm font-bold font-mono text-emerald-400">
+                            {symScore !== undefined ? `${symScore.toFixed(2)}` : '--'}
+                          </div>
                           <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">Skor</div>
                         </div>
                         
-                        {/* Delete Button */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -255,7 +255,6 @@ export default function DashboardPage() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
-                        
                       </div>
                     </div>
                   );
@@ -264,9 +263,8 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Right Column: Graphic and Analysis */}
+          {/* Right Column: Graphic and Dynamic Rule Analysis */}
           <div className="lg:col-span-8 flex flex-col space-y-6">
-            
             <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-6 shadow-2xl backdrop-blur-md">
               {!selectedSymbol ? (
                 <div className="h-[450px] flex flex-col items-center justify-center text-slate-500">
@@ -280,16 +278,12 @@ export default function DashboardPage() {
                       <div className="flex items-center space-x-3">
                         <h3 className="font-mono text-2xl font-bold text-slate-50">{selectedSymbol}</h3>
                         <span className="text-xs font-mono text-slate-500 uppercase tracking-widest bg-slate-800/60 px-2 py-0.5 rounded">
-                          15 Dk | Mum Grafiği
+                          1 Yıl | Günlük Mum & İndikatörler
                         </span>
                       </div>
-                      
-                      {/* Company Name (Graph Section) */}
                       <p className="text-sm font-medium text-slate-400 mt-1">
                         {selectedSymbol ? TICKER_NAMES[selectedSymbol] || selectedSymbol : ''}
                       </p>
-                      
-                      <p className="text-xs text-slate-500 mt-1">Canlı Piyasa Fiyatlandırması</p>
                     </div>
 
                     {marketData && !loadingMarket ? (
@@ -314,7 +308,7 @@ export default function DashboardPage() {
 
                   <div className="w-full">
                     {marketData?.candles && !loadingMarket ? (
-                      <ChartWrapper candles={marketData.candles} />
+                      <ChartWrapper candles={marketData.candles} indicators={marketData.indicators} />
                     ) : (
                       <div className="h-[380px] flex items-center justify-center text-slate-600 text-sm">
                         Grafik verisi yükleniyor...
@@ -325,41 +319,53 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Algorithmic Score & Rule Analysis Card (Show if a stock is selected) */}
+            {/* Real Algorithmic Score & Rule Breakdown Card */}
             {selectedSymbol && (
               <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-6 shadow-2xl backdrop-blur-md">
                 <div className="flex items-center justify-between mb-6">
                   <div>
                     <h3 className="text-base font-semibold text-slate-200">Algoritmik Güven Skoru</h3>
-                    <p className="text-xs text-slate-400 mt-1">Sistem tarafından belirlenen teknik kuralların sağlanma durumu.</p>
+                    <p className="text-xs text-slate-400 mt-1">Admin panelinde tanımlanan aktif teknik kuralların canlı analizi.</p>
                   </div>
-                  <div className="flex items-center justify-center h-14 w-14 rounded-full border-4 border-emerald-500/20 bg-emerald-500/10 text-emerald-400 font-mono font-bold text-lg">
-                    95
+                  <div className="flex items-center justify-center px-4 h-14 rounded-xl border-2 border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-mono font-bold text-lg">
+                    {currentScore.toFixed(2)}
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  {MOCK_RULE_RESULTS.map((rule) => (
-                    <div key={rule.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
-                      <div className="flex items-center space-x-3">
-                        {rule.isMet ? (
-                          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                        ) : (
-                          <XCircle className="h-5 w-5 text-slate-600" />
-                        )}
-                        <span className={`text-sm ${rule.isMet ? 'text-slate-200' : 'text-slate-500'}`}>
-                          {rule.condition}
+                  {!marketData?.rules_breakdown || marketData.rules_breakdown.length === 0 ? (
+                    <div className="p-4 rounded-lg bg-slate-800/30 border border-slate-700/50 text-xs text-slate-500 text-center">
+                      Henüz sistemde tanımlı aktif bir algoritmik kural bulunmuyor.
+                    </div>
+                  ) : (
+                    marketData.rules_breakdown.map((rule) => (
+                      <div key={rule.id} className="flex items-center justify-between p-3.5 rounded-lg bg-slate-800/30 border border-slate-700/50">
+                        <div className="flex items-center space-x-3">
+                          {rule.is_met ? (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+                          ) : (
+                            <XCircle className="h-5 w-5 text-slate-600 shrink-0" />
+                          )}
+                          <div>
+                            <span className={`text-sm font-medium ${rule.is_met ? 'text-slate-200' : 'text-slate-500'}`}>
+                              {rule.name}
+                            </span>
+                            {rule.current_value !== undefined && (
+                              <p className="text-[11px] font-mono text-slate-500 mt-0.5">
+                                Güncel: <span className="text-slate-300">{rule.current_value}</span> | Hedef: <span className="text-slate-300">{rule.target_value}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <span className={`text-xs font-mono font-semibold ${rule.is_met ? 'text-emerald-400' : 'text-slate-600'}`}>
+                          {rule.is_met ? `+${rule.earned_score.toFixed(2)} Puan` : '0.00 Puan'}
                         </span>
                       </div>
-                      <span className={`text-xs font-mono font-semibold ${rule.isMet ? 'text-emerald-400' : 'text-slate-600'}`}>
-                        {rule.isMet ? `+${rule.weight} Puan` : '0 Puan'}
-                      </span>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             )}
-
           </div>
         </div>
       </main>
