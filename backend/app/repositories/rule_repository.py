@@ -9,8 +9,8 @@ class RuleRepository:
 
     async def get_active_rules(self) -> Sequence[Rule]:
         """
-        Sadece aktif (is_active=True) durumdaki kuralları getirir.
+        Fetches only the currently active (is_active=True) global rules.
         """
-        stmt = select(Rule).where(Rule.is_active == True)
+        stmt = select(Rule).where(Rule.is_active == True).order_by(Rule.id.asc())
         result = await self.db.execute(stmt)
         return result.scalars().all()

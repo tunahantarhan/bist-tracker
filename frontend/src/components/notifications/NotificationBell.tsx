@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Bell } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,18 +15,30 @@ import {
 
 interface AppNotification {
   id: number;
+  rule_id: number;
+  symbol?: string; // Added symbol for UI redirection
   message: string;
   is_read: boolean;
   created_at: string;
 }
 
 export default function NotificationBell() {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   useEffect(() => {
     // TODO: Will be connected to the backend to fetch notifications for the logged-in user
   }, []);
+
+  const handleNotificationClick = (notification: AppNotification) => {
+    // TODO: Mark as read logic via API will go here
+    
+    // Redirect to the detail page if a symbol is attached to the notification
+    if (notification.symbol) {
+      router.push(`/detay/${notification.symbol.toUpperCase()}`);
+    }
+  };
 
   return (
     <DropdownMenu>
@@ -45,12 +58,26 @@ export default function NotificationBell() {
             </div>
           ) : (
             notifications.map((notification) => (
-              <DropdownMenuItem key={notification.id} className="flex flex-col items-start p-3 cursor-pointer focus:bg-slate-800 focus:text-slate-100">
+              <DropdownMenuItem 
+                key={notification.id} 
+                onClick={() => handleNotificationClick(notification)}
+                className="flex flex-col items-start p-3 cursor-pointer focus:bg-slate-800 focus:text-slate-100"
+              >
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  {notification.symbol && (
+                    <span className="text-[10px] font-mono font-bold bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">
+                      {notification.symbol}
+                    </span>
+                  )}
+                  {!notification.is_read && (
+                    <span className="h-2 w-2 rounded-full bg-blue-500"></span>
+                  )}
+                </div>
                 <span className={`text-sm ${notification.is_read ? 'text-slate-500' : 'text-slate-200 font-semibold'}`}>
                   {notification.message}
                 </span>
-                <span className="text-xs text-slate-500 mt-1">
-                  {new Date(notification.created_at).toLocaleDateString('tr-TR')}
+                <span className="text-[10px] text-slate-500 mt-2">
+                  {new Date(notification.created_at).toLocaleString('tr-TR')}
                 </span>
               </DropdownMenuItem>
             ))

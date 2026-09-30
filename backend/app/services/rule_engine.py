@@ -1,105 +1,169 @@
 import pandas as pd
 import pandas_ta as ta
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 
 class RuleEngine:
     @staticmethod
-    def calculate_indicator(df: pd.DataFrame, rule_type: str, parameters: Dict[str, Any]) -> float:
+    def get_indicator_series(df: pd.DataFrame, indicator: str, params: Dict[str, Any] | None) -> pd.Series:
         """
-        From OHLCV data (DataFrame), the indicator is being calculated for the relative rule type
-        and most recent (last) value is returned.
+        Calculates the technical indicator series from OHLCV DataFrame.
+        Returns a pandas Series to support both static comparisons and crossover checks.
         """
-        if df.empty or len(df) < 2:
-            raise ValueError("Hesaplama için yetersiz veri.")
+        if df.empty or len(df) < 30:
+            raise ValueError("Insufficient historical data for indicator calculation.")
 
-        if rule_type == "RSI":
-            length = parameters.get("period", 14)
-            # RSI calculation with pandas-ta
-            df.ta.rsi(length=length, append=True)
-            # Fetch the latest value from the calculated RSI column 
-            return df[f"RSI_{length}"].iloc[-1]
-            
-        elif rule_type == "SMA":
-            length = parameters.get("period", 20)
-            df.ta.sma(length=length, append=True)
-            return df[f"SMA_{length}"].iloc[-1]
-            
-        elif rule_type == "PRICE":
-            return float(df["close"].iloc[-1])
-            
+        params = params or {}
+        
+        # Ensure we access the Close column regardless of capitalization
+        close_col = "Close" if "Close" in df.columns else "close"
+        close = df[close_col].astype(float)
+
+        ind = indicator.upper()
+
+        if ind == "PRICE":
+            return close
+
+        elif ind == "RSI":
+            length = int(params.get("length", params.get("period", 14)))
+            return ta.rsi(close, length=length)
+
+        elif ind in ["SMA", "MA"]:
+            length = int(params.get("length", params.get("period", 50)))
+            return ta.sma(close, length=length)
+
+        elif ind == "EMA":
+            length = int(params.get("length", params.get("period", 50)))
+            return ta.ema(close, length=length)
+
+        elif ind in ["STOCH_RSI", "STOCH_RSI_K", "STOCH_RSI_D"]:
+            length = int(params.get("length", 14))
+            rsi_length = int(params.get("rsi_length", 14))
+            k = int(params.get("k", 3))
+            d = int(params.get("d", 3))
+            stoch_df = ta.stochrsi(close, length=length, rsi_length=rsi_length, k=k, d=d)
+            if stoch_df is None or stoch_df.empty:
+                raise ValueError("Failed to calculate Stoch RSI.")
+            # Column 0 is %K, Column 1 is %D
+            return stoch_df.iloc[:, 1] if ind == "STOCH_RSI_D" else stoch_df.iloc[:, 0]
+
+        elif ind in ["MACD", "MACD_LINE", "MACD_SIGNAL", "MACD_HIST"]:
+            fast = int(params.get("fast", 12))
+            slow = int(params.get("slow", 26))
+            signal = int(params.get("signal", 9))
+            macd_df = ta.macd(close, fast=fast, slow=slow, signal=signal)
+            if macd_df is None or macd_df.empty:
+                raise ValueError("Failed to calculate MACD.")
+            # Column 0: MACD Line, Column 1: Histogram, Column 2: Signal Line
+            if ind == "MACD_HIST":
+                return macd_df.iloc[:, 1]
+            elif ind == "MACD_SIGNAL":
+                return macd_df.iloc[:, 2]
+            return macd_df.iloc[:, 0]
+
+        elif ind in ["BOLLINGER_UPPER", "BOLLINGER_MIDDLE", "BOLLINGER_LOWER", "BB_UPPER", "BB_MIDDLE", "BB_LOWER"]:
+            # Default consultant parameters: length 22, std_dev 2.0
+            length = int(params.get("length", 22))
+            std_dev = float(params.get("std_dev", 2.0))
+            bb_df = ta.bbands(close, length=length, std=std_dev)
+            if bb_df is None or bb_df.empty:
+                raise ValueError("Failed to calculate Bollinger Bands.")
+            # Column 0: Lower Band, Column 1: Middle Band, Column 2: Upper Band
+            if ind in ["BOLLINGER_LOWER", "BB_LOWER"]:
+                return bb_df.iloc[:, 0]
+            elif ind in ["BOLLINGER_MIDDLE", "BB_MIDDLE"]:
+                return bb_df.iloc[:, 1]
+            return bb_df.iloc[:, 2]
+
         else:
-            raise ValueError(f"Desteklenmeyen kural tipi: {rule_type}")
-
-    @staticmethod
-    def evaluate_rule(
-        current_value: float,
-        operator: str,
-        threshold: float,
-        previous_state: bool
-    ) -> Tuple[bool, bool]:
-        """
-        The current value is being compared with target state and state change (False -> True) is checked.
-        """
-        is_condition_met = False
-
-        if operator == ">":
-            is_condition_met = current_value > threshold
-        elif operator == "<":
-            is_condition_met = current_value < threshold
-        elif operator == ">=":
-            is_condition_met = current_value >= threshold
-        elif operator == "<=":
-            is_condition_met = current_value <= threshold
-        elif operator == "==":
-            is_condition_met = current_value == threshold
-        else:
-            raise ValueError(f"Desteklenmeyen operatör: {operator}")
-
-        # State Transition: Notification is being sent only if the state changes from False to True.
-        should_trigger_notification = is_condition_met and not previous_state
-
-        return is_condition_met, should_trigger_notification
+            raise ValueError(f"Unsupported indicator type: {indicator}")
 
     @classmethod
-    def process_symbol_rules(cls, symbol_data: pd.DataFrame, rules: list) -> list:
+    def evaluate_single_rule(cls, df: pd.DataFrame, rule: Any) -> Tuple[bool, float, float]:
         """
-        DataFrame relevant to a stock and the rules dedicated to the same stock are processed in bulk.
-        The list of notifications that need to be triggered is returned.
+        Evaluates a single dynamic rule against the stock's DataFrame.
+        Returns (is_condition_met, current_val_1, current_target_val).
         """
-        notifications_to_send = []
+        series_1 = cls.get_indicator_series(df, rule.indicator_1, rule.indicator_1_params)
+        if series_1 is None or len(series_1.dropna()) < 2:
+            return False, 0.0, 0.0
+
+        curr_1 = float(series_1.iloc[-1])
+        prev_1 = float(series_1.iloc[-2])
+
+        # Determine target values (either a static float or a second indicator series)
+        if rule.target_type == "static":
+            curr_2 = float(rule.static_value or 0.0)
+            prev_2 = curr_2
+        else:
+            series_2 = cls.get_indicator_series(df, rule.indicator_2, rule.indicator_2_params)
+            if series_2 is None or len(series_2.dropna()) < 2:
+                return False, curr_1, 0.0
+            curr_2 = float(series_2.iloc[-1])
+            prev_2 = float(series_2.iloc[-2])
+
+        cond = rule.condition
+        is_met = False
+
+        if cond == ">":
+            is_met = curr_1 > curr_2
+        elif cond == "<":
+            is_met = curr_1 < curr_2
+        elif cond == ">=":
+            is_met = curr_1 >= curr_2
+        elif cond == "<=":
+            is_met = curr_1 <= curr_2
+        elif cond == "==":
+            is_met = round(curr_1, 2) == round(curr_2, 2)
+        elif cond == "crosses_above":
+            is_met = (prev_1 <= prev_2) and (curr_1 > curr_2)
+        elif cond == "crosses_below":
+            is_met = (prev_1 >= prev_2) and (curr_1 < curr_2)
+        else:
+            raise ValueError(f"Unsupported condition operator: {cond}")
+
+        return is_met, round(curr_1, 2), round(curr_2, 2)
+
+    @classmethod
+    def evaluate_symbol(cls, df: pd.DataFrame, rules: List[Any]) -> Dict[str, Any]:
+        """
+        Processes all active global rules for a given stock DataFrame.
+        Calculates the precise (millimetric) confidence score and rule breakdown.
+        """
+        total_score = 0.0
+        breakdown = []
 
         for rule in rules:
             try:
-                # 1. Calculate the current value of the indicator
-                current_val = cls.calculate_indicator(
-                    df=symbol_data, 
-                    rule_type=rule.rule_type, 
-                    parameters=rule.parameters
-                )
+                is_met, val_1, val_2 = cls.evaluate_single_rule(df, rule)
+                impact = float(rule.score_impact) if is_met else 0.0
+                total_score += impact
 
-                # 2. Review the rule and check the state transition
-                new_state, should_notify = cls.evaluate_rule(
-                    current_value=current_val,
-                    operator=rule.operator,
-                    threshold=rule.threshold,
-                    previous_state=rule.last_state
-                )
-
-                # 3. If the state is changed, update the object for the database record.
-                if new_state != rule.last_state:
-                    rule.last_state = new_state
-                    # P.S: At this point, a repository layer should be used that will call SQLAlchemy session.commit(). 
-
-                # 4. Notification decision
-                if should_notify:
-                    notifications_to_send.append({
-                        "rule_id": rule.id,
-                        "symbol": rule.symbol,
-                        "message": f"{rule.symbol} için {rule.rule_type} değeri {current_val:.2f} oldu (Şart: {rule.operator} {rule.threshold})"
-                    })
-
+                breakdown.append({
+                    "id": rule.id,
+                    "name": rule.name,
+                    "condition_text": rule.description or rule.name,
+                    "is_met": is_met,
+                    "score_impact": round(float(rule.score_impact), 2),
+                    "earned_score": round(impact, 2),
+                    "current_value": val_1,
+                    "target_value": val_2
+                })
             except Exception as e:
-                # Error logging (to the database or log service)
-                print(f"Kural işleme hatası (Rule ID: {rule.id}): {e}")
+                print(f"Error evaluating rule ID {rule.id} ({rule.name}): {e}")
+                breakdown.append({
+                    "id": rule.id,
+                    "name": rule.name,
+                    "condition_text": rule.description or rule.name,
+                    "is_met": False,
+                    "score_impact": round(float(rule.score_impact), 2),
+                    "earned_score": 0.0,
+                    "error": str(e)
+                })
 
-        return notifications_to_send
+        # Clamp total score between 0 and 100 while preserving decimal precision (e.g., 78.20)
+        clamped_score = max(0.0, min(100.0, round(total_score, 2)))
+
+        return {
+            "total_score": clamped_score,
+            "rules_breakdown": breakdown
+        }

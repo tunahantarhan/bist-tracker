@@ -1,31 +1,18 @@
-export enum RuleType {
-  PRICE = "PRICE",
-  RSI = "RSI",
-  SMA = "SMA",
-}
-
-export enum RuleOperator {
-  GREATER_THAN = ">",
-  LESS_THAN = "<",
-  GREATER_OR_EQUAL = ">=",
-  LESS_OR_EQUAL = "<=",
-}
-
-export interface RuleParameters {
-  period?: number;
-  [key: string]: unknown;
-}
-
 export interface Rule {
   id: number;
-  symbol: string;
-  rule_type: 'PRICE' | 'RSI' | 'SMA';
-  operator: '>' | '<' | '>=' | '<=';
-  threshold: number;
-  parameters: RuleParameters;
+  name: string;
+  description?: string | null;
+  indicator_1: string;
+  indicator_1_params?: Record<string, any> | null;
+  condition: string;
+  target_type: 'static' | 'indicator';
+  static_value?: number | null;
+  indicator_2?: string | null;
+  indicator_2_params?: Record<string, any> | null;
+  score_impact: number;
   is_active: boolean;
-  last_triggered_at: string | null;
-  created_at: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface AppNotification {
