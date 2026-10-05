@@ -18,7 +18,9 @@ import {
   XCircle,
   RefreshCw,
   TrendingUp,
-  TrendingDown
+  TrendingDown,
+  Filter,
+  Calendar
 } from 'lucide-react';
 import RuleList from '@/components/rules/RuleList';
 import CreateRuleDialog from '@/components/rules/CreateRuleDialog';
@@ -28,23 +30,41 @@ import { Rule } from '@/types';
 
 type AdminTab = 'rules' | 'users' | 'settings' | null;
 
+const CHART_INTERVALS = [
+  { value: '5m', label: '5Dk' },
+  { value: '15m', label: '15Dk' },
+  { value: '1h', label: '1S' },
+  { value: '4h', label: '4S' },
+  { value: '1d', label: '1G' },
+];
+
+const CHART_PERIODS = [
+  { value: '1mo', label: '1A' },
+  { value: '3mo', label: '3A' },
+  { value: '6mo', label: '6A' },
+  { value: '1y', label: '1Y' },
+  { value: '2y', label: '2Y' },
+  { value: '5y', label: '5Y' },
+];
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<AdminTab>(null);
   const [rules, setRules] = useState<Rule[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Universe & Searchable Preview Stock State
   const [universe, setUniverse] = useState<{ symbol: string; name: string }[]>([]);
   const [previewSymbol, setPreviewSymbol] = useState('GARAN');
+  const [previewConfig, setPreviewConfig] = useState<{ interval: string; period: string }>({
+    interval: '4h',
+    period: '6mo',
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // Live Preview Market & Rule Evaluation Data
   const [previewData, setPreviewData] = useState<MarketData | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
 
-  // Fetch all global rules
   const loadRules = async () => {
     setLoading(true);
     try {
@@ -54,32 +74,18 @@ export default function AdminDashboard() {
         setRules(data);
       }
     } catch (error) {
-      console.error('Failed to fetch rules:', error);
+      console.warn('Failed to fetch rules:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Load stock universe for the searchable selector
   const loadUniverse = async () => {
     try {
       const data = await fetchUniverse();
       setUniverse(data);
     } catch (error) {
-      console.error('Failed to load stock universe:', error);
-    }
-  };
-
-  // Load market candles, indicator overlays, and live rule evaluation for the test stock
-  const loadPreviewMarket = async (symbol: string) => {
-    setLoadingPreview(true);
-    try {
-      const data = await fetchMarketData(symbol);
-      setPreviewData(data);
-    } catch (error) {
-      console.error('Failed to load preview market data:', error);
-    } finally {
-      setLoadingPreview(false);
+      console.warn('Failed to load stock universe:', error);
     }
   };
 
@@ -98,14 +104,60 @@ export default function AdminDashboard() {
     loadUniverse();
   }, [router]);
 
-  // Reload live preview whenever previewSymbol or rules list changes
   useEffect(() => {
-    if (activeTab === 'rules' && previewSymbol) {
-      loadPreviewMarket(previewSymbol);
-    }
-  }, [activeTab, previewSymbol, rules.length]);
+    if (activeTab !== 'rules' || !previewSymbol) return;
 
-  // Delete a rule by ID and refresh preview
+    const controller = new AbortController();
+
+    const loadPreview = async () => {
+      setLoadingPreview(true);
+      try {
+        const data = await fetchMarketData(
+          previewSymbol,
+          previewConfig.interval,
+          previewConfig.period,
+          controller.signal
+        );
+        setPreviewData(data);
+      } catch (error: any) {
+        if (error?.name !== 'AbortError') {
+          console.warn('Önizleme verisi alınamadı:', error?.message);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadingPreview(false);
+        }
+      }
+    };
+
+    loadPreview();
+    return () => controller.abort();
+  }, [activeTab, previewSymbol, previewConfig, rules.length]);
+
+  const handleIntervalChange = (newInterval: string) => {
+    setPreviewConfig((prev) => {
+      let nextPeriod = prev.period;
+      if (newInterval === '5m' || newInterval === '15m') {
+        nextPeriod = '1mo';
+      } else if ((newInterval === '1h' || newInterval === '4h') && prev.period === '5y') {
+        nextPeriod = '1y';
+      }
+      return { interval: newInterval, period: nextPeriod };
+    });
+  };
+
+  const handlePeriodChange = (newPeriod: string) => {
+    setPreviewConfig((prev) => {
+      let nextInterval = prev.interval;
+      if (newPeriod === '5y' && prev.interval !== '1d') {
+        nextInterval = '1d';
+      } else if (newPeriod !== '1mo' && (prev.interval === '5m' || prev.interval === '15m')) {
+        nextInterval = '4h';
+      }
+      return { interval: nextInterval, period: newPeriod };
+    });
+  };
+
   const handleDeleteRule = async (id: number) => {
     if (!window.confirm('Bu kuralı silmek istediğinize emin misiniz?')) return;
     
@@ -117,7 +169,7 @@ export default function AdminDashboard() {
         setRules(prev => prev.filter(r => r.id !== id));
       }
     } catch (error) {
-      console.error('Failed to delete rule:', error);
+      console.warn('Failed to delete rule:', error);
     }
   };
 
@@ -134,7 +186,7 @@ export default function AdminDashboard() {
       case 'rules':
         return {
           title: 'Kural Motoru Yönetimi & Canlı Simülasyon',
-          subtitle: 'Sistem genelinde geçerli algoritmik skorlama kurallarını tanımlayın ve BIST hisseleri üzerinde test edin.'
+          subtitle: 'Çoklu zaman diliminde (5dk, 15dk, 4s, 1g) RSI düşen trend kırılımı ve hareketli ortalama kurallarını yönetin.'
         };
       case 'users':
         return {
@@ -270,7 +322,7 @@ export default function AdminDashboard() {
                 </h2>
                 <p className="text-sm text-slate-400 mt-2 max-w-2xl leading-relaxed">
                   Bu panel üzerinden BIST Tracker platformunun algoritmik skorlama kurallarını dinamik olarak yapılandırabilir, 
-                  indikatör kesişimlerini canlı grafiklerde test edebilir ve sistem parametrelerini yönetebilirsiniz.
+                  RSI düşen trend kırılımlarını ve hareketli ortalama kesişimlerini canlı grafiklerde test edebilirsiniz.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
@@ -286,7 +338,7 @@ export default function AdminDashboard() {
                         Kural Motoru & İndikatörler
                       </h3>
                       <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                        RSI, Stoch RSI, MACD, MA ve Bollinger kuralları ekleyin, milimetrik puan ağırlıklarını belirleyin.
+                        4S RSI Düşen Trend Kırılımı (Mavi Çizgi), 5dk/15dk MA kesişimleri ve milimetrik puan ağırlıklarını yönetin.
                       </p>
                     </div>
                     <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs font-medium text-blue-400">
@@ -341,7 +393,7 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* 2. RULE ENGINE TAB (5 Cols Rule List / 7 Cols Wide Chart Preview) */}
+          {/* 2. RULE ENGINE TAB */}
           {activeTab === 'rules' && (
             <div className="max-w-[1440px] mx-auto grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
               
@@ -361,7 +413,7 @@ export default function AdminDashboard() {
                 <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-6 shadow-2xl backdrop-blur-md">
                   
                   {/* Top Bar: Title & Searchable Universe Stock Selector */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-5 mb-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4 mb-4">
                     <div>
                       <div className="flex items-center space-x-2">
                         <LineChart className="h-5 w-5 text-blue-400" />
@@ -370,12 +422,12 @@ export default function AdminDashboard() {
                         </h3>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        Hisse evreninden bir sembol seçerek aktif kuralları ve indikatör kesişimlerini canlı simüle edin.
+                        Mum periyodunu ve tarihsel menzili (1A - 5Y) seçerek RSI mavi trend çizgisini inceleyin.
                       </p>
                     </div>
 
                     {/* Searchable Stock Selector */}
-                    <div className="relative w-full sm:w-72">
+                    <div className="relative w-full sm:w-64">
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                         <input
@@ -388,7 +440,7 @@ export default function AdminDashboard() {
                             setIsSearchOpen(true);
                           }}
                           placeholder={`${previewSymbol} (${selectedStockInfo?.name || 'Hisse Ara...'})`}
-                          className="w-full rounded-lg border border-slate-700/80 bg-[#161b26] py-2 pl-9 pr-3 text-xs font-mono text-slate-100 placeholder:text-slate-300 focus:border-blue-500 focus:outline-none transition-colors"
+                          className="w-full rounded-lg border border-slate-700/80 bg-[#161b26] py-1.5 pl-9 pr-3 text-xs font-mono text-slate-100 placeholder:text-slate-300 focus:border-blue-500 focus:outline-none transition-colors"
                         />
                       </div>
 
@@ -415,7 +467,7 @@ export default function AdminDashboard() {
                                 }`}
                               >
                                 <span className="font-mono font-bold">{item.symbol}</span>
-                                <span className="text-slate-400 truncate max-w-[160px]">{item.name}</span>
+                                <span className="text-slate-400 truncate max-w-[140px]">{item.name}</span>
                               </button>
                             ))
                           )}
@@ -424,7 +476,51 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Selected Stock Price & Total Simulated Score Banner */}
+                  {/* Dual Time Controls: Candle Interval (5Dk-1G) & Historical Range (1A, 3A, 6A, 1Y, 2Y, 5Y) */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[11px] font-medium text-slate-400">Mum:</span>
+                      <div className="flex items-center bg-[#161b26] p-1 rounded-lg border border-slate-800">
+                        {CHART_INTERVALS.map((tf) => (
+                          <button
+                            key={tf.value}
+                            type="button"
+                            onClick={() => handleIntervalChange(tf.value)}
+                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium transition-all cursor-pointer ${
+                              previewConfig.interval === tf.value
+                                ? 'bg-blue-600 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {tf.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                      <span className="text-[11px] font-medium text-slate-400">Menzil:</span>
+                      <div className="flex items-center bg-[#161b26] p-1 rounded-lg border border-slate-800">
+                        {CHART_PERIODS.map((p) => (
+                          <button
+                            key={p.value}
+                            type="button"
+                            onClick={() => handlePeriodChange(p.value)}
+                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium transition-all cursor-pointer ${
+                              previewConfig.period === p.value
+                                ? 'bg-purple-600 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Selected Stock Price, Funnel Status & Total Simulated Score Banner */}
                   <div className="flex flex-wrap items-center justify-between gap-4 bg-[#161b26] p-4 rounded-xl border border-slate-800/90 mb-5">
                     <div>
                       <div className="flex items-center space-x-2.5">
@@ -432,8 +528,8 @@ export default function AdminDashboard() {
                         <span className="text-xs text-slate-400 font-medium">
                           {selectedStockInfo?.name || ''}
                         </span>
-                        <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded">
-                          1 Yıllık Günlük (1D)
+                        <span className="text-[10px] font-mono uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded">
+                          {previewConfig.interval.toUpperCase()} / {previewConfig.period.toUpperCase()}
                         </span>
                       </div>
                       {previewData && !loadingPreview && (
@@ -452,10 +548,17 @@ export default function AdminDashboard() {
                     </div>
 
                     <div className="flex items-center space-x-3">
-                      <div className="text-right">
-                        <div className="text-[11px] uppercase tracking-wider text-slate-400">Toplam Algoritmik Skor</div>
-                        <div className="text-xs text-slate-500">Aktif kuralların anlık sonucu</div>
-                      </div>
+                      {previewData?.has_primary_filter && (
+                        <div className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-semibold flex items-center space-x-1.5 ${
+                          previewData.primary_filter_passed
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                        }`}>
+                          <Filter className="h-3.5 w-3.5" />
+                          <span>{previewData.primary_filter_passed ? 'Ana Filtreyi Geçti' : 'Ana Filtreye Takıldı'}</span>
+                        </div>
+                      )}
+
                       <div className="px-3.5 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 font-mono text-lg font-bold text-emerald-400">
                         {previewData?.score !== undefined ? previewData.score.toFixed(2) : '0.00'}
                         <span className="text-xs text-slate-400 font-normal"> / 100</span>
@@ -463,32 +566,33 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Lightweight Charts with Indicator Overlays */}
-                  <div className="w-full rounded-xl border border-slate-800/80 bg-[#0b0e14]/60 p-3 min-h-[400px] flex items-center justify-center">
+                  {/* Lightweight Charts with Indicator Overlays & Synchronized RSI Trendline Sub-Pane */}
+                  <div className="w-full rounded-xl border border-slate-800/80 bg-[#0b0e14]/60 p-3 min-h-[460px] flex items-center justify-center">
                     {loadingPreview ? (
                       <div className="flex items-center space-x-2 text-sm font-mono text-slate-400">
                         <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />
-                        <span>{previewSymbol} verileri ve indikatörler hesaplanıyor...</span>
+                        <span>{previewSymbol} ({previewConfig.interval} / {previewConfig.period}) verileri hesaplanıyor...</span>
                       </div>
                     ) : previewData?.candles ? (
                       <ChartWrapper
                         candles={previewData.candles}
                         indicators={previewData.indicators}
-                        height={380}
+                        rsiPane={previewData.rsi_pane}
+                        height={300}
                       />
                     ) : (
                       <span className="text-sm text-slate-500">Grafik verisi bulunamadı.</span>
                     )}
                   </div>
 
-                  {/* Live Rule Evaluation Breakdown */}
+                  {/* Live Multi-Timeframe Rule Evaluation Breakdown */}
                   <div className="mt-6 space-y-3">
                     <div className="flex items-center justify-between">
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                        {previewSymbol} İçin Kural Değerlendirme Detayı
+                        {previewSymbol} Çoklu Zaman Dilimi Kural Sonuçları
                       </h4>
                       <span className="text-[11px] text-slate-500">
-                        (MA ve Bollinger grafiğe çizilir, RSI/MACD değerleri aşağıda listelenir)
+                        (Her kural kendi tanımlandığı mum periyodunda değerlendirilir)
                       </span>
                     </div>
 
@@ -510,12 +614,27 @@ export default function AdminDashboard() {
                                 <XCircle className="h-4 w-4 text-slate-600 shrink-0" />
                               )}
                               <div>
-                                <div className={`text-xs font-semibold ${item.is_met ? 'text-slate-100' : 'text-slate-400'}`}>
-                                  {item.name}
+                                <div className="flex items-center space-x-2">
+                                  <span className={`text-xs font-semibold ${item.is_met ? 'text-slate-100' : 'text-slate-400'}`}>
+                                    {item.name}
+                                  </span>
+                                  {item.timeframe && (
+                                    <span className="text-[10px] font-mono bg-purple-500/15 text-purple-300 border border-purple-500/30 px-1.5 py-0.5 rounded uppercase">
+                                      {item.timeframe}
+                                    </span>
+                                  )}
+                                  {item.is_primary_filter && (
+                                    <span className="text-[10px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                                      ANA FİLTRE
+                                    </span>
+                                  )}
                                 </div>
                                 {item.current_value !== undefined && (
                                   <div className="text-[11px] font-mono text-slate-500 mt-0.5">
-                                    Anlık Değer: <span className="text-slate-300">{item.current_value}</span> | Hedef: <span className="text-slate-300">{item.target_value}</span>
+                                    Anlık: <span className="text-slate-300">{item.current_value}</span> | Çizgi/Hedef: <span className="text-slate-300">{item.target_value}</span>
+                                    {item.slope !== undefined && item.slope !== null && (
+                                      <span className="ml-2 text-blue-400">(Eğim: {item.slope} | Tepe RSI: {item.peak_rsi})</span>
+                                    )}
                                   </div>
                                 )}
                               </div>

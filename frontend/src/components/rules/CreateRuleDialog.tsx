@@ -19,20 +19,30 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { createRule } from '@/services/api';
-import { Plus } from 'lucide-react';
+import { Plus, Filter } from 'lucide-react';
 
 interface CreateRuleDialogProps {
   onRuleCreated?: () => void;
 }
 
+const TIMEFRAMES = [
+  { value: '5m', label: '5 Dakikalık (5dk)' },
+  { value: '15m', label: '15 Dakikalık (15dk)' },
+  { value: '1h', label: '1 Saatlik (1s)' },
+  { value: '4h', label: '4 Saatlik (4s)' },
+  { value: '1d', label: '1 Günlük (1g)' },
+];
+
 const INDICATORS = [
   { value: 'RSI', label: 'RSI' },
+  { value: 'RSI_TRENDLINE', label: 'RSI Düşen Trend Çizgisi (Mavi Çizgi)' },
+  { value: 'SMA', label: 'MA (Basit Hareketli Ortalama)' },
+  { value: 'EMA', label: 'EMA (Üssel Hareketli Ortalama)' },
   { value: 'STOCH_RSI_K', label: 'Stoch RSI (%K)' },
   { value: 'STOCH_RSI_D', label: 'Stoch RSI (%D)' },
   { value: 'MACD_LINE', label: 'MACD Line' },
   { value: 'MACD_SIGNAL', label: 'MACD Signal' },
   { value: 'MACD_HIST', label: 'MACD Histogram' },
-  { value: 'SMA', label: 'MA (Hareketli Ortalama)' },
   { value: 'BOLLINGER_UPPER', label: 'Bollinger Üst Bant' },
   { value: 'BOLLINGER_MIDDLE', label: 'Bollinger Orta Bant' },
   { value: 'BOLLINGER_LOWER', label: 'Bollinger Alt Bant' },
@@ -40,20 +50,22 @@ const INDICATORS = [
 ];
 
 const CONDITIONS = [
+  { value: 'crosses_above', label: 'Yukarı Keser (Crosses Above)' },
+  { value: 'crosses_below', label: 'Aşağı Keser (Crosses Below)' },
   { value: '>', label: 'Büyüktür (>)' },
   { value: '<', label: 'Küçüktür (<)' },
   { value: '>=', label: 'Büyük Eşittir (>=)' },
   { value: '<=', label: 'Küçük Eşittir (<=)' },
-  { value: 'crosses_above', label: 'Yukarı Keser (Crosses Above)' },
-  { value: 'crosses_below', label: 'Aşağı Keser (Crosses Below)' },
 ];
 
 const TARGET_TYPES = [
-  { value: 'static', label: 'Sabit Sayı (Örn: 30)' },
-  { value: 'indicator', label: 'Başka Bir İndikatör' },
+  { value: 'indicator', label: 'Başka Bir İndikatör / Trend Çizgisi' },
+  { value: 'static', label: 'Sabit Sayı (Örn: 30 veya 50)' },
 ];
 
-// Helper functions to display human-readable labels inside the trigger boxes
+const getTimeframeLabel = (val: string) =>
+  TIMEFRAMES.find((tf) => tf.value === val)?.label || val;
+
 const getIndicatorLabel = (val: string) =>
   INDICATORS.find((i) => i.value === val)?.label || val;
 
@@ -68,19 +80,78 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
   const [loading, setLoading] = useState(false);
 
   const [name, setName] = useState('');
-  const [indicator1, setIndicator1] = useState('SMA');
-  const [ind1Length, setInd1Length] = useState('50');
+  const [timeframe, setTimeframe] = useState('4h');
+  const [isPrimaryFilter, setIsPrimaryFilter] = useState(false);
+
+  const [indicator1, setIndicator1] = useState('RSI');
+  const [ind1Length, setInd1Length] = useState('14');
   const [condition, setCondition] = useState('crosses_above');
   const [targetType, setTargetType] = useState<'static' | 'indicator'>('indicator');
   const [staticValue, setStaticValue] = useState('30');
-  const [indicator2, setIndicator2] = useState('SMA');
-  const [ind2Length, setInd2Length] = useState('200');
-  const [scoreImpact, setScoreImpact] = useState('12.50');
 
-  // Helper to build JSONB parameters based on selected indicator
+  const [indicator2, setIndicator2] = useState('RSI_TRENDLINE');
+  const [ind2Length, setInd2Length] = useState('21');
+
+  // RSI Trendline specific parameters
+  const [trendLookback, setTrendLookback] = useState('60');
+  const [trendMinPeak, setTrendMinPeak] = useState('55');
+  const [trendSlope, setTrendSlope] = useState(''); // Optional manual negative slope
+
+  const [scoreImpact, setScoreImpact] = useState('35.00');
+
+  // Quick preset loader for Consultant's 4h RSI Breakout or 5m/15m MA Crossover
+  const applyPreset = (preset: 'rsi_breakout_4h' | 'ma_cross_15m' | 'ma_cross_5m') => {
+    if (preset === 'rsi_breakout_4h') {
+      setName('4S RSI Düşen Trend Kırılımı (Mavi Çizgi)');
+      setTimeframe('4h');
+      setIsPrimaryFilter(true);
+      setIndicator1('RSI');
+      setInd1Length('14');
+      setCondition('crosses_above');
+      setTargetType('indicator');
+      setIndicator2('RSI_TRENDLINE');
+      setTrendLookback('60');
+      setTrendMinPeak('55');
+      setScoreImpact('40.00');
+    } else if (preset === 'ma_cross_15m') {
+      setName('15Dk MA(9) Yukarı Keser MA(14)');
+      setTimeframe('15m');
+      setIsPrimaryFilter(false);
+      setIndicator1('SMA');
+      setInd1Length('9');
+      setCondition('crosses_above');
+      setTargetType('indicator');
+      setIndicator2('SMA');
+      setInd2Length('14');
+      setScoreImpact('30.00');
+    } else if (preset === 'ma_cross_5m') {
+      setName('5Dk MA(9) Yukarı Keser MA(21)');
+      setTimeframe('5m');
+      setIsPrimaryFilter(false);
+      setIndicator1('SMA');
+      setInd1Length('9');
+      setCondition('crosses_above');
+      setTargetType('indicator');
+      setIndicator2('SMA');
+      setInd2Length('21');
+      setScoreImpact('30.00');
+    }
+  };
+
   const buildParams = (ind: string, lengthVal: string) => {
     const len = parseInt(lengthVal, 10) || 14;
-    if (ind === 'SMA' || ind === 'RSI') return { length: len };
+    if (ind === 'SMA' || ind === 'EMA' || ind === 'RSI') return { length: len };
+    if (ind === 'RSI_TRENDLINE') {
+      const p: Record<string, any> = {
+        length: parseInt(ind1Length, 10) || 14,
+        lookback: parseInt(trendLookback, 10) || 60,
+        min_peak: parseFloat(trendMinPeak) || 55.0,
+      };
+      if (trendSlope.trim() !== '' && !isNaN(parseFloat(trendSlope))) {
+        p.slope = parseFloat(trendSlope);
+      }
+      return p;
+    }
     if (ind.startsWith('BOLLINGER')) return { length: 22, std_dev: 2.0 };
     if (ind.startsWith('STOCH_RSI')) return { length: 14, rsi_length: 14, k: 3, d: 3 };
     if (ind.startsWith('MACD')) return { fast: 12, slow: 26, signal: 9 };
@@ -96,6 +167,8 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
       await createRule({
         name,
         description: name,
+        timeframe,
+        is_primary_filter: isPrimaryFilter,
         indicator_1: indicator1,
         indicator_1_params: buildParams(indicator1, ind1Length),
         condition,
@@ -117,6 +190,9 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
     }
   };
 
+  const showInd1Period = indicator1 === 'SMA' || indicator1 === 'EMA' || indicator1 === 'RSI';
+  const showInd2Period = indicator2 === 'SMA' || indicator2 === 'EMA' || indicator2 === 'RSI';
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger>
@@ -125,34 +201,104 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
           <span>Yeni Algoritmik Kural Ekle</span>
         </span>
       </DialogTrigger>
-      <DialogContent className="border border-slate-700/80 bg-[#12161f] text-slate-100 sm:max-w-xl shadow-2xl">
+      <DialogContent className="border border-slate-700/80 bg-[#12161f] text-slate-100 sm:max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold text-slate-100">
-            Dinamik Skor Kuralı Tanımla
+            Çoklu Periyot & Dinamik Skor Kuralı Tanımla
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-5 pt-3">
-          <div className="space-y-2">
+
+        {/* Quick Strategy Presets from Business Meeting */}
+        <div className="pt-1">
+          <span className="text-[11px] font-medium text-slate-400 block mb-2">
+            Hızlı Şablonlar (Tek Tıkla Doldur):
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => applyPreset('rsi_breakout_4h')}
+              className="text-[11px] font-mono bg-blue-600/15 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
+            >
+              ⚡ 4S RSI Mavi Çizgi Kırılımı (Ana Filtre)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('ma_cross_15m')}
+              className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
+            >
+              📈 15Dk MA(9) x MA(14)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('ma_cross_5m')}
+              className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
+            >
+              🚀 5Dk MA(9) x MA(21)
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          {/* Rule Name */}
+          <div className="space-y-1.5">
             <Label className="text-xs font-medium text-slate-300">Kural Adı / Açıklaması</Label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Örn: Golden Cross (MA 50 Yukarı Keser MA 200)"
+              placeholder="Örn: 4S RSI Düşen Trend Kırılımı"
               className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
               required
             />
           </div>
 
+          {/* Timeframe & Funnel Role (Primary Filter vs Score Rule) */}
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-6 space-y-1.5">
+              <Label className="text-xs font-medium text-slate-300">Zaman Dilimi (Mum Periyodu)</Label>
+              <Select value={timeframe} onValueChange={(val) => val && setTimeframe(val)}>
+                <SelectTrigger>
+                  <SelectValue>{getTimeframeLabel(timeframe)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEFRAMES.map((tf) => (
+                    <SelectItem key={tf.value} value={tf.value}>
+                      {tf.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="col-span-6 space-y-1.5">
+              <Label className="text-xs font-medium text-slate-300">Huni Rolü (Öncelik)</Label>
+              <button
+                type="button"
+                onClick={() => setIsPrimaryFilter(!isPrimaryFilter)}
+                className={`w-full h-9 px-3 rounded-lg border text-xs font-medium flex items-center justify-between transition-all cursor-pointer ${
+                  isPrimaryFilter
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
+                    : 'bg-[#161b26] border-slate-700/80 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span className="flex items-center space-x-1.5 truncate">
+                  <Filter className="h-3.5 w-3.5 shrink-0" />
+                  <span>{isPrimaryFilter ? 'Ana Filtre (Hisse Daraltıcı)' : 'Ek Skor Kuralı'}</span>
+                </span>
+                <span className={`h-2 w-2 rounded-full ${isPrimaryFilter ? 'bg-amber-400' : 'bg-slate-600'}`} />
+              </button>
+            </div>
+          </div>
+
           {/* 1. Indicator Selection */}
           <div className="grid grid-cols-12 gap-4">
-            <div className={`${indicator1 === 'SMA' || indicator1 === 'RSI' ? 'col-span-8' : 'col-span-12'} space-y-2`}>
+            <div className={`${showInd1Period ? 'col-span-8' : 'col-span-12'} space-y-1.5`}>
               <Label className="text-xs font-medium text-slate-300">1. İndikatör</Label>
               <Select value={indicator1} onValueChange={(val) => val && setIndicator1(val)}>
                 <SelectTrigger>
                   <SelectValue>{getIndicatorLabel(indicator1)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {INDICATORS.map((i) => (
+                  {INDICATORS.filter((i) => i.value !== 'RSI_TRENDLINE').map((i) => (
                     <SelectItem key={i.value} value={i.value}>
                       {i.label}
                     </SelectItem>
@@ -160,14 +306,14 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
                 </SelectContent>
               </Select>
             </div>
-            {(indicator1 === 'SMA' || indicator1 === 'RSI') && (
-              <div className="col-span-4 space-y-2">
-                <Label className="text-xs font-medium text-slate-300">Periyot (Gün)</Label>
+            {showInd1Period && (
+              <div className="col-span-4 space-y-1.5">
+                <Label className="text-xs font-medium text-slate-300">Mum Periyodu</Label>
                 <Input
                   type="number"
                   value={ind1Length}
                   onChange={(e) => setInd1Length(e.target.value)}
-                  placeholder="9, 14, 21, 50..."
+                  placeholder="9, 14, 21..."
                   className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
                 />
               </div>
@@ -176,7 +322,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
 
           {/* Condition & Target Type */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label className="text-xs font-medium text-slate-300">Koşul Operatörü</Label>
               <Select value={condition} onValueChange={(val) => val && setCondition(val)}>
                 <SelectTrigger>
@@ -192,7 +338,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
               </Select>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label className="text-xs font-medium text-slate-300">Hedef Türü</Label>
               <Select value={targetType} onValueChange={(v) => v && setTargetType(v as 'static' | 'indicator')}>
                 <SelectTrigger>
@@ -211,59 +357,104 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
 
           {/* Target Value or 2nd Indicator */}
           {targetType === 'static' ? (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label className="text-xs font-medium text-slate-300">Sabit Eşik Değer</Label>
               <Input
                 type="number"
                 step="any"
                 value={staticValue}
                 onChange={(e) => setStaticValue(e.target.value)}
-                placeholder="Örn: RSI için 30 veya 70"
+                placeholder="Örn: RSI için 30 veya 50"
                 className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
                 required
               />
             </div>
           ) : (
-            <div className="grid grid-cols-12 gap-4">
-              <div className={`${indicator2 === 'SMA' || indicator2 === 'RSI' ? 'col-span-8' : 'col-span-12'} space-y-2`}>
-                <Label className="text-xs font-medium text-slate-300">2. İndikatör (Hedef)</Label>
-                <Select value={indicator2} onValueChange={(val) => val && setIndicator2(val)}>
-                  <SelectTrigger>
-                    <SelectValue>{getIndicatorLabel(indicator2)}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INDICATORS.map((i) => (
-                      <SelectItem key={i.value} value={i.value}>
-                        {i.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="space-y-3">
+              <div className="grid grid-cols-12 gap-4">
+                <div className={`${showInd2Period ? 'col-span-8' : 'col-span-12'} space-y-1.5`}>
+                  <Label className="text-xs font-medium text-slate-300">2. İndikatör (Hedef)</Label>
+                  <Select value={indicator2} onValueChange={(val) => val && setIndicator2(val)}>
+                    <SelectTrigger>
+                      <SelectValue>{getIndicatorLabel(indicator2)}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INDICATORS.map((i) => (
+                        <SelectItem key={i.value} value={i.value}>
+                          {i.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {showInd2Period && (
+                  <div className="col-span-4 space-y-1.5">
+                    <Label className="text-xs font-medium text-slate-300">Mum Periyodu</Label>
+                    <Input
+                      type="number"
+                      value={ind2Length}
+                      onChange={(e) => setInd2Length(e.target.value)}
+                      placeholder="14, 21, 50..."
+                      className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
+                    />
+                  </div>
+                )}
               </div>
-              {(indicator2 === 'SMA' || indicator2 === 'RSI') && (
-                <div className="col-span-4 space-y-2">
-                  <Label className="text-xs font-medium text-slate-300">Periyot (Gün)</Label>
-                  <Input
-                    type="number"
-                    value={ind2Length}
-                    onChange={(e) => setInd2Length(e.target.value)}
-                    placeholder="50, 100, 200..."
-                    className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
-                  />
+
+              {/* Extra mathematical parameters when RSI Blue Trendline is selected */}
+              {indicator2 === 'RSI_TRENDLINE' && (
+                <div className="rounded-lg border border-blue-500/25 bg-blue-950/20 p-3 space-y-3">
+                  <div className="text-[11px] text-blue-300 font-medium">
+                    📐 Mavi Çizgi (RSI Düşen Trend) Matematiksel Parametreleri
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-400">Tepe Arama (Mum)</Label>
+                      <Input
+                        type="number"
+                        value={trendLookback}
+                        onChange={(e) => setTrendLookback(e.target.value)}
+                        placeholder="60"
+                        className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-400">Min. Tepe RSI</Label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={trendMinPeak}
+                        onChange={(e) => setTrendMinPeak(e.target.value)}
+                        placeholder="55"
+                        className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-400">Sabit Eğim (Opsiyonel)</Label>
+                      <Input
+                        type="number"
+                        step="0.05"
+                        value={trendSlope}
+                        onChange={(e) => setTrendSlope(e.target.value)}
+                        placeholder="Otomatik (-0.35)"
+                        className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono"
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
           )}
 
           {/* Millimetric Score Impact */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <Label className="text-xs font-medium text-slate-300">Skor Etkisi (Milimetrik Puan)</Label>
             <Input
               type="number"
               step="0.01"
               value={scoreImpact}
               onChange={(e) => setScoreImpact(e.target.value)}
-              placeholder="Örn: 12.50 veya 15.75"
+              placeholder="Örn: 35.00 veya 12.50"
               className="border-slate-700/80 bg-[#161b26] text-slate-100 font-mono transition-colors hover:border-slate-600 focus:border-blue-500"
               required
             />

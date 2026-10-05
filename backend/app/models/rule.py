@@ -15,28 +15,32 @@ class Rule(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String, index=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Timeframe in which this rule is evaluated ("5m", "15m", "1h", "4h", "1d")
+    timeframe: Mapped[str] = mapped_column(String(16), server_default="1d", default="1d", nullable=False)
+
+    # Primary Gatekeeper Filter flag (Funnel stage 1: e.g., 4h RSI Downtrend Breakout)
+    is_primary_filter: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False, nullable=False)
     
-    # 1. Main Indicator (E.g., "RSI", "SMA", "MACD", "BOLLINGER", "STOCH_RSI")
+    # 1. Main Indicator (E.g., "RSI", "SMA", "MACD_LINE", "BOLLINGER_UPPER", "STOCH_RSI_K")
     indicator_1: Mapped[str] = mapped_column(String, nullable=False)
-    # Indicator Parameters (E.g., {"period": 14} or {"length": 22, "std_dev": 2})
+    # Indicator Parameters (E.g., {"length": 14} or {"length": 22, "std_dev": 2})
     indicator_1_params: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True) 
     
-    # Comparison Condition (E.g., ">", "<", "crosses_above", "crosses_below", "between")
+    # Comparison Condition (E.g., ">", "<", "crosses_above", "crosses_below")
     condition: Mapped[str] = mapped_column(String, nullable=False)
     
-    # Target Type: "static" (static number, e.g., 30) or "indicator" (another indicator, e.g., MA 200)
+    # Target Type: "static" (static number, e.g., 30) or "indicator" (e.g., MA 200 or RSI_TRENDLINE)
     target_type: Mapped[str] = mapped_column(String, nullable=False) 
     
-    # If the taget is a static value (E.g., RSI < 30),
-    # then we need to specify the static value.
+    # If the target is a static value (E.g., RSI < 30)
     static_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     
-    # If the taget is an indicator (E.g., SMA 50 > SMA 200), 
-    # then we need to specify the second indicator and its parameters.
+    # If the target is an indicator (E.g., SMA 50 > SMA 200, or RSI crosses_above RSI_TRENDLINE)
     indicator_2: Mapped[str | None] = mapped_column(String, nullable=True)
     indicator_2_params: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     
-    # When the rule is satisfied, this score impact will be added to the stock's score. 
+    # Millimetric score weight added when rule is satisfied
     score_impact: Mapped[float] = mapped_column(Float, nullable=False)
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -51,6 +55,6 @@ class Rule(Base):
         nullable=False,
     )
 
-    notifications: Mapped[list[Notification]] = relationship(
-         "Notification", back_populates="rule", cascade="all, delete-orphan"
- )
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification", back_populates="rule", cascade="all, delete-orphan"
+    )

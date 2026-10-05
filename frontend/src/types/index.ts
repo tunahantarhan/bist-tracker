@@ -2,6 +2,8 @@ export interface Rule {
   id: number;
   name: string;
   description?: string | null;
+  timeframe: string; // "5m" | "15m" | "1h" | "4h" | "1d"
+  is_primary_filter: boolean;
   indicator_1: string;
   indicator_1_params?: Record<string, any> | null;
   condition: string;
@@ -18,6 +20,7 @@ export interface Rule {
 export interface AppNotification {
   id: number;
   rule_id: number;
+  symbol?: string;
   message: string;
   is_read: boolean;
   created_at: string;

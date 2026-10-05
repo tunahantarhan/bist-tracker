@@ -2,7 +2,6 @@ import { Rule } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
 
-// Helper function to safely retrieve the token from localStorage
 const getAuthHeaders = () => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -17,18 +16,26 @@ const getAuthHeaders = () => {
   return headers;
 };
 
-// Centralized fetch wrapper that intercepts 401 Unauthorized responses globally
+// Centralized fetch wrapper that safely handles network errors and 401 responses
 async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      ...getAuthHeaders(),
-      ...(options.headers || {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers: {
+        ...getAuthHeaders(),
+        ...(options.headers || {}),
+      },
+    });
+  } catch (err: any) {
+    // Re-throw AbortError silently so rapid button clicks don't trigger error overlays
+    if (err?.name === 'AbortError') {
+      throw err;
+    }
+    throw new Error('Sunucuya bağlanılamadı. Lütfen biraz bekleyip tekrar deneyin.');
+  }
 
   if (res.status === 401 && typeof window !== 'undefined') {
-    // Trigger global session expired modal if we are not already on the auth page
     if (!window.location.pathname.startsWith('/auth')) {
       window.dispatchEvent(new CustomEvent('session-expired'));
     }
@@ -41,12 +48,16 @@ async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Re
 export interface RuleBreakdownItem {
   id: number;
   name: string;
+  timeframe?: string;
+  is_primary_filter?: boolean;
   condition_text: string;
   is_met: boolean;
   score_impact: number;
   earned_score: number;
   current_value?: number;
   target_value?: number;
+  slope?: number | null;
+  peak_rsi?: number | null;
   error?: string;
 }
 
@@ -59,8 +70,17 @@ export interface IndicatorOverlay {
   }[];
 }
 
+export interface RsiPaneData {
+  rsi: { time: string | number; value: number }[];
+  trendline: { time: string | number; value: number }[];
+  slope?: number | null;
+  peak_rsi?: number | null;
+}
+
 export interface MarketData {
   symbol: string;
+  interval?: string;
+  period?: string;
   current_price: number;
   change_pct: number;
   candles: {
@@ -71,8 +91,11 @@ export interface MarketData {
     close: number;
   }[];
   score?: number;
+  primary_filter_passed?: boolean;
+  has_primary_filter?: boolean;
   rules_breakdown?: RuleBreakdownItem[];
   indicators?: IndicatorOverlay[];
+  rsi_pane?: RsiPaneData;
 }
 
 export async function fetchRules(): Promise<Rule[]> {
@@ -92,8 +115,20 @@ export async function createRule(
   return await res.json();
 }
 
-export async function fetchMarketData(symbol: string): Promise<MarketData> {
-  const res = await fetchWithAuth(`${API_BASE_URL}/market/${symbol}`, { cache: 'no-store' });
+export async function fetchMarketData(
+  symbol: string,
+  interval: string = '4h',
+  period: string = '6mo',
+  signal?: AbortSignal
+): Promise<MarketData> {
+  const params = new URLSearchParams({
+    interval,
+    period,
+  });
+  const res = await fetchWithAuth(
+    `${API_BASE_URL}/market/${symbol}?${params.toString()}`,
+    { cache: 'no-store', signal }
+  );
   if (!res.ok) throw new Error('Piyasa verisi alınamadı');
   return await res.json();
 }

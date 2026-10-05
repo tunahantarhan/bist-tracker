@@ -5,6 +5,8 @@ from datetime import datetime
 class RuleBase(BaseModel):
     name: str
     description: Optional[str] = None
+    timeframe: str = "1d"
+    is_primary_filter: bool = False
     indicator_1: str
     indicator_1_params: Optional[Dict[str, Any]] = None
     condition: str
@@ -21,6 +23,8 @@ class RuleCreate(RuleBase):
 class RuleUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    timeframe: Optional[str] = None
+    is_primary_filter: Optional[bool] = None
     indicator_1: Optional[str] = None
     indicator_1_params: Optional[Dict[str, Any]] = None
     condition: Optional[str] = None
@@ -39,5 +43,5 @@ class RuleResponse(RuleBase):
     class Config:
         from_attributes = True
 
-# In the case of Rule is imported in another file, we can use an alias to avoid naming conflicts.
+# Alias to avoid naming conflicts
 Rule = RuleResponse
