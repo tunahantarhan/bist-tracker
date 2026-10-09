@@ -1,6 +1,7 @@
 import { Rule } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
+export const API_URL = API_BASE_URL;
 
 const getAuthHeaders = () => {
   const headers: Record<string, string> = {
@@ -59,6 +60,7 @@ export interface RuleBreakdownItem {
   slope?: number | null;
   peak_rsi?: number | null;
   error?: string;
+  condition?: string;
 }
 
 export interface IndicatorOverlay {
@@ -161,5 +163,51 @@ export async function removeFromWatchlist(symbol: string) {
 export async function fetchUniverse(): Promise<{ symbol: string; name: string }[]> {
   const res = await fetchWithAuth(`${API_BASE_URL}/market/universe`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Hisse evreni alınamadı');
+  return await res.json();
+}
+
+export interface StockOverviewItem {
+  symbol: string;
+  name: string;
+  current_price: number;
+  change_pct: number;
+  score: number;
+  primary_filter_passed: boolean;
+  has_primary_filter: boolean;
+}
+
+export interface MarketOverviewResponse {
+  items: StockOverviewItem[];
+  rsi_passed: StockOverviewItem[];
+  top_scored: StockOverviewItem[];
+  top_priced: StockOverviewItem[];
+}
+
+export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/market/overview`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Piyasa özeti alınamadı');
+  return await res.json();
+}
+
+export async function fetchActiveUniverse(): Promise<string[]> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/market/universe/active`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Aktif hisse evreni alınamadı');
+  return await res.json();
+}
+
+export async function updateActiveUniverse(symbols: string[]): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/market/universe/update`, {
+    method: 'POST',
+    body: JSON.stringify(symbols),
+  });
+  if (!res.ok) throw new Error('Hisse evreni güncellenemedi');
+  return await res.json();
+}
+
+export async function deleteRule(id: number): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/rules/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Kural silinemedi');
   return await res.json();
 }

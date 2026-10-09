@@ -5,13 +5,19 @@ __pycache__/
 venv/
 env/
 .venv/
+.pytest_cache/
 
-# Environment Variables
+# Environment Variables (Security)
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # IDEs
 .vscode/
 .idea/
+.cursor/
 
 # Node.js / Frontend
 node_modules/
@@ -20,6 +26,7 @@ out/
 build/
 dist/
 .turbo/
+coverage/
 
 # OS Files
 .DS_Store
@@ -28,6 +35,7 @@ Thumbs.db
 # Docker / Logs
 *.log
 
-*.txt
-*.md
-.cursor/
+# Personal Notes
+NOTE2MYSELF.txt
+bist_tracker.md
+CURSOR.md

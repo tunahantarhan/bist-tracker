@@ -4,25 +4,25 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Clock, LogIn } from 'lucide-react';
 
-// Helper to decode JWT payload and check if 'exp' timestamp has passed
+// Safely decode JWT payload with proper Base64URL padding
 function isTokenExpired(token: string): boolean {
   try {
-    const payloadBase64 = token.split('.')[1];
-    if (!payloadBase64) return true;
-    const base64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      window
-        .atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    const { exp } = JSON.parse(jsonPayload);
-    if (!exp) return false;
-    // Trigger 5 seconds before actual expiration to prevent failed in-flight requests
-    return Date.now() >= exp * 1000 - 5000;
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+      base64 += '=';
+    }
+
+    const decoded = window.atob(base64);
+    const payload = JSON.parse(decoded);
+    if (!payload.exp) return false;
+
+    return Date.now() >= payload.exp * 1000;
   } catch {
-    return true;
+    // Do not falsely expire session if client-side decoding fails; rely on backend 401
+    return false;
   }
 }
 
@@ -32,7 +32,6 @@ export default function SessionGuard() {
   const [expired, setExpired] = useState(false);
   const hadTokenRef = useRef(false);
 
-  // Public routes that do not require authentication
   const isPublicRoute = pathname === '/' || pathname?.startsWith('/auth');
 
   const clearSessionStorage = () => {
@@ -43,7 +42,6 @@ export default function SessionGuard() {
 
   const triggerExpirationModal = useCallback(() => {
     if (isPublicRoute) return;
-    // Clear tokens immediately so a page refresh (F5) will redirect straight to /auth
     clearSessionStorage();
     setExpired(true);
   }, [isPublicRoute]);
@@ -57,7 +55,6 @@ export default function SessionGuard() {
 
     const initialToken = localStorage.getItem('access_token');
 
-    // If the page is loaded/refreshed with no token at all, redirect straight to /auth
     if (!initialToken) {
       if (!expired) {
         router.replace('/auth');
@@ -65,7 +62,6 @@ export default function SessionGuard() {
       return;
     }
 
-    // If the existing token on mount is already expired, show the modal
     if (isTokenExpired(initialToken)) {
       triggerExpirationModal();
       return;
@@ -86,10 +82,8 @@ export default function SessionGuard() {
       }
     };
 
-    // Check periodically every 10 seconds while tab remains open
-    const intervalId = setInterval(checkSession, 10000);
+    const intervalId = setInterval(checkSession, 30000);
 
-    // Check immediately when user switches back to this browser tab
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
         checkSession();

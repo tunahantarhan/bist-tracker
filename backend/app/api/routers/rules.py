@@ -1,3 +1,320 @@
+import asyncio
+import time
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+import pandas as pd
+
+from app.core.database import get_db
+from app.models.rule import Rule
+from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
+from app.providers.yfinance_provider import YFinanceProvider
+from app.services.rule_engine import RuleEngine
+from app.api.routers.market import TICKER_INFO
+from app.models.universe import UniverseStock
+
+router = APIRouter(tags=["Rules & Market"])
+provider = YFinanceProvider()
+
+OVERLAY_INDICATORS = {
+    "SMA", "MA", "EMA",
+    "BOLLINGER_UPPER", "BOLLINGER_MIDDLE", "BOLLINGER_LOWER",
+    "BB_UPPER", "BB_MIDDLE", "BB_LOWER"
+}
+
+LINE_COLORS = [
+    "#3b82f6", # Blue (MA 9)
+    "#f59e0b", # Amber (MA 14)
+    "#a855f7", # Purple (MA 21)
+    "#06b6d4", # Cyan (MA 50)
+    "#ec4899", # Pink (MA 100)
+    "#84cc16", # Lime (MA 200)
+    "#14b8a6", # Teal (Bollinger Middle)
+    "#f43f5e", # Rose (Bollinger Lower/Upper)
+]
+
+# Cache for full universe scanner overview (refreshes every 45 seconds or when rules change)
+_overview_cache = {
+    "timestamp": 0.0,
+    "data": None,
+}
+
+
+def invalidate_overview_cache():
+    _overview_cache["timestamp"] = 0.0
+    _overview_cache["data"] = None
+
+
+@router.get("/rules", response_model=list[RuleResponse])
+async def get_rules(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Rule).order_by(Rule.is_primary_filter.desc(), Rule.id.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/rules", response_model=RuleResponse)
+async def create_rule(rule_in: RuleCreate, db: AsyncSession = Depends(get_db)):
+    rule = Rule(**rule_in.model_dump())
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    invalidate_overview_cache()
+    return rule
+
+
+@router.patch("/rules/{rule_id}", response_model=RuleResponse)
+async def update_rule(rule_id: int, rule_in: RuleUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Rule).where(Rule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    update_data = rule_in.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(rule, field, value)
+
+    await db.commit()
+    await db.refresh(rule)
+    invalidate_overview_cache()
+    return rule
+
+
+@router.delete("/rules/{rule_id}")
+async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Rule).where(Rule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    await db.delete(rule)
+    await db.commit()
+    invalidate_overview_cache()
+    return {"detail": "Rule deleted successfully"}
+
+
+@router.post("/rules/seed-defaults", response_model=list[RuleResponse])
+async def seed_consultant_default_rules(db: AsyncSession = Depends(get_db)):
+    default_suite = [
+        {
+            "name": "4S RSI (14) Düşen Trend Kırılımı (Mavi Çizgi)",
+            "description": "4 Saatlik grafikte RSI(14) düşen direnç çizgisini yukarı kırmalı veya üzerinde olmalı",
+            "timeframe": "4h",
+            "is_primary_filter": True,
+            "indicator_1": "RSI",
+            "indicator_1_params": {"length": 14},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "RSI_TRENDLINE",
+            "indicator_2_params": {"length": 14, "lookback": 60, "min_peak": 55.0},
+            "score_impact": 25.0,
+            "is_active": True,
+        },
+        {
+            "name": "Stoch RSI (14,14,3,3) Pozitif Kesişim (%K > %D)",
+            "description": "Stoch RSI %K çizgisi %D sinyal çizgisinin üzerinde",
+            "timeframe": "4h",
+            "is_primary_filter": False,
+            "indicator_1": "STOCH_RSI_K",
+            "indicator_1_params": {"length": 14, "rsi_length": 14, "k": 3, "d": 3},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "STOCH_RSI_D",
+            "indicator_2_params": {"length": 14, "rsi_length": 14, "k": 3, "d": 3},
+            "score_impact": 10.0,
+            "is_active": True,
+        },
+        {
+            "name": "MACD (12,26,9) Pozitif Momentum (Line > Signal)",
+            "description": "MACD ana çizgisi sinyal çizgisinin üzerinde",
+            "timeframe": "4h",
+            "is_primary_filter": False,
+            "indicator_1": "MACD_LINE",
+            "indicator_1_params": {"fast": 12, "slow": 26, "signal": 9},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "MACD_SIGNAL",
+            "indicator_2_params": {"fast": 12, "slow": 26, "signal": 9},
+            "score_impact": 10.0,
+            "is_active": True,
+        },
+        {
+            "name": "Kısa Vade Ortalama: MA (9) > MA (14)",
+            "description": "15 Dakikalık grafikte 9 periyotluk ortalama 14 periyotluk ortalamanın üzerinde",
+            "timeframe": "15m",
+            "is_primary_filter": False,
+            "indicator_1": "SMA",
+            "indicator_1_params": {"length": 9},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "SMA",
+            "indicator_2_params": {"length": 14},
+            "score_impact": 10.0,
+            "is_active": True,
+        },
+        {
+            "name": "Orta Vade Ortalama: MA (21) > MA (50)",
+            "description": "4 Saatlik grafikte MA(21) orta vadeli MA(50) ortalamasının üzerinde",
+            "timeframe": "4h",
+            "is_primary_filter": False,
+            "indicator_1": "SMA",
+            "indicator_1_params": {"length": 21},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "SMA",
+            "indicator_2_params": {"length": 50},
+            "score_impact": 12.5,
+            "is_active": True,
+        },
+        {
+            "name": "Uzun Vade Ana Trend: MA (100) > MA (200)",
+            "description": "Günlük grafikte MA(100) ana trend göstergesi MA(200) üzerinde",
+            "timeframe": "1d",
+            "is_primary_filter": False,
+            "indicator_1": "SMA",
+            "indicator_1_params": {"length": 100},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "SMA",
+            "indicator_2_params": {"length": 200},
+            "score_impact": 12.5,
+            "is_active": True,
+        },
+        {
+            "name": "Bollinger Bandı (22, 2) Orta Bant Üzeri Güç",
+            "description": "Fiyat 22 periyotluk ve 2 standart sapmalı Bollinger orta bandının üzerinde",
+            "timeframe": "4h",
+            "is_primary_filter": False,
+            "indicator_1": "PRICE",
+            "indicator_1_params": {},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "BOLLINGER_MIDDLE",
+            "indicator_2_params": {"length": 22, "std_dev": 2.0},
+            "score_impact": 10.0,
+            "is_active": True,
+        },
+        {
+            "name": "Bollinger Bandı (22, 2) Alt Bant Desteği Üzeri",
+            "description": "Fiyat Bollinger (22, 2) alt bandının üzerinde güvenli bölgede",
+            "timeframe": "4h",
+            "is_primary_filter": False,
+            "indicator_1": "PRICE",
+            "indicator_1_params": {},
+            "condition": ">",
+            "target_type": "indicator",
+            "indicator_2": "BOLLINGER_LOWER",
+            "indicator_2_params": {"length": 22, "std_dev": 2.0},
+            "score_impact": 10.0,
+            "is_active": True,
+        },
+    ]
+
+    created_rules = []
+    for item in default_suite:
+        rule = Rule(**item)
+        db.add(rule)
+        created_rules.append(rule)
+
+    await db.commit()
+    for r in created_rules:
+        await db.refresh(r)
+
+    invalidate_overview_cache()
+    return created_rules
+
+
+@router.get("/market/overview")
+async def get_market_overview(db: AsyncSession = Depends(get_db)):
+    """
+    Scans the entire active BIST universe in the background on load.
+    """
+    now = time.time()
+    if _overview_cache["data"] is not None and (now - _overview_cache["timestamp"]) < 45.0:
+        return _overview_cache["data"]
+
+    active_rules_res = await db.execute(
+        select(Rule).where(Rule.is_active == True).order_by(Rule.is_primary_filter.desc(), Rule.id.asc())
+    )
+    active_rules = list(active_rules_res.scalars().all())
+    required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
+    if not required_tfs:
+        required_tfs = {"4h"}
+
+    active_stocks_res = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
+    symbols = [s.symbol for s in active_stocks_res.scalars().all()]
+    
+    if not symbols:
+        symbols = list(TICKER_INFO.keys())
+
+    async def _evaluate_single_symbol(sym: str):
+        try:
+            dfs_by_tf = {}
+            for tf in required_tfs:
+                df = await provider.fetch_historical_data(symbol=sym, interval=tf)
+                if not df.empty:
+                    dfs_by_tf[tf] = df
+
+            default_df = dfs_by_tf.get("4h")
+            if default_df is None or default_df.empty:
+                default_df = next(iter(dfs_by_tf.values()), pd.DataFrame())
+
+            if default_df.empty:
+                return None
+
+            closes = default_df["Close"].astype(float).tolist()
+            last_close = round(closes[-1], 2)
+            prev_close = closes[-2] if len(closes) > 1 else last_close
+            change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
+
+            eval_res = {
+                "total_score": 0.0,
+                "primary_filter_passed": False,
+                "has_primary_filter": False,
+            }
+            if active_rules:
+                eval_res = RuleEngine.evaluate_symbol(default_df, active_rules, dataframes_by_tf=dfs_by_tf)
+
+            return {
+                "symbol": sym,
+                "name": TICKER_INFO.get(sym, sym),
+                "current_price": last_close,
+                "change_pct": change_pct,
+                "score": eval_res["total_score"],
+                "primary_filter_passed": eval_res["primary_filter_passed"],
+                "has_primary_filter": eval_res["has_primary_filter"],
+            }
+        except Exception as e:
+            print(f"Overview scan skipped for {sym}: {e}")
+            return None
+
+    results = await asyncio.gather(*[_evaluate_single_symbol(s) for s in symbols])
+    valid_items = [r for r in results if r is not None]
+
+    # 1. Stocks that passed the Primary RSI Filter (sorted by score descending)
+    rsi_passed = sorted(
+        [item for item in valid_items if item["primary_filter_passed"]],
+        key=lambda x: x["score"],
+        reverse=True,
+    )
+
+    # 2. Top 10 Highest Scored Stocks
+    top_scored = sorted(valid_items, key=lambda x: (x["score"], x["change_pct"]), reverse=True)[:10]
+
+    # 3. Top 10 Highest Priced / Valued Stocks
+    top_priced = sorted(valid_items, key=lambda x: x["current_price"], reverse=True)[:10]
+
+    payload = {
+        "items": valid_items,
+        "rsi_passed": rsi_passed,
+        "top_scored": top_scored,
+        "top_priced": top_priced,
+    }
+    _overview_cache["timestamp"] = time.time()
+    _overview_cache["data"] = payload
+    return payload
+
+
 @router.get("/market/{symbol}")
 async def get_market_data(
     symbol: str,
@@ -5,12 +322,7 @@ async def get_market_data(
     interval: str = "4h",
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Fetches historical candles, evaluates active rules across timeframes concurrently,
-    and vectorizes candle/indicator serialization for fast response times.
-    """
     try:
-        # Fetch active rules from DB and chart data concurrently
         chart_task = asyncio.create_task(
             provider.fetch_historical_data(symbol=symbol, period=period, interval=interval)
         )
@@ -38,7 +350,6 @@ async def get_market_data(
         prev_close = closes[-2] if len(closes) > 1 else last_close
         change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
 
-        # Fast list comprehension instead of slow Pandas .iterrows()
         candles = [
             {"time": t, "open": o, "high": h, "low": l, "close": c}
             for t, o, h, l, c in zip(time_strings, opens, highs, lows, closes)
@@ -143,5 +454,43 @@ async def get_market_data(
             "indicators": indicator_overlays,
             "rsi_pane": rsi_pane,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/market/universe/active")
+async def get_active_universe(db: AsyncSession = Depends(get_db)):
+    """Brings the active BIST universe selected from the admin panel."""
+    result = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
+    stocks = result.scalars().all()
+    # If the database is empty, return the default list
+    if not stocks:
+        default_symbols = ["THYAO", "AKBNK", "KCHOL", "TUPRS", "GARAN"]
+        for sym in default_symbols:
+            db.add(UniverseStock(symbol=sym, is_active=True))
+        await db.commit()
+        return default_symbols
+    return [s.symbol for s in stocks]
+
+@router.post("/market/universe/update")
+async def update_universe(symbols: list[str], db: AsyncSession = Depends(get_db)):
+    """Saves the new stock universe which comes from the admin panel. """
+    # Passify all existing stocks 
+    await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
+    all_stocks_res = await db.execute(select(UniverseStock))
+    for stock in all_stocks_res.scalars().all():
+        stock.is_active = False
+    
+    # Activate the new stocks or add them if they don't exist 
+    for sym in symbols:
+        result = await db.execute(select(UniverseStock).where(UniverseStock.symbol == sym))
+        stock = result.scalar_one_or_none()
+        if stock:
+            stock.is_active = True
+        else:
+            db.add(UniverseStock(symbol=sym, is_active=True))
+            
+    await db.commit()
+    invalidate_overview_cache()
+    return {"status": "success", "active_count": len(symbols)}

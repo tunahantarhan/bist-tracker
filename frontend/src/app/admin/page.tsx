@@ -8,24 +8,22 @@ import {
   Users, 
   LogOut, 
   LayoutDashboard, 
-  Activity,
   LineChart,
   ArrowRight,
   Sliders,
   Database,
   Search,
-  CheckCircle2,
-  XCircle,
   RefreshCw,
   TrendingUp,
   TrendingDown,
   Filter,
-  Calendar
+  Calendar,
+  X
 } from 'lucide-react';
 import RuleList from '@/components/rules/RuleList';
 import CreateRuleDialog from '@/components/rules/CreateRuleDialog';
 import ChartWrapper from '@/components/charts/ChartWrapper';
-import { fetchMarketData, fetchUniverse, MarketData } from '@/services/api';
+import { fetchMarketData, fetchUniverse, fetchRules, deleteRule, updateActiveUniverse, MarketData } from '@/services/api';
 import { Rule } from '@/types';
 
 type AdminTab = 'rules' | 'users' | 'settings' | null;
@@ -47,6 +45,14 @@ const CHART_PERIODS = [
   { value: '5y', label: '5Y' },
 ];
 
+const BIST_UNIVERSE_FULL = [
+  "THYAO", "GARAN", "AKBNK", "ISCTR", "TUPRS", "KCHOL", "SAHOL", "ASELS", "BIMAS", "EREGL", 
+  "SISE", "FROTO", "YKBNK", "TOASO", "ENKAI", "PETKM", "PGSUS", "TCELL", "TTKOM", "VAKBN", 
+  "HALKB", "EKGYO", "DOHOL", "HEKTS", "SASA", "GUBRF", "ODAS", "KRDMD", 
+  "ALARK", "TAVHL", "DOAS", "OYAKC", "SOKM", "MGROS", "AEFES", "TKFEN", "ISGYO", "ENJSA",
+  "ASTOR", "EUPWR", "CWENE", "KMPUR", "SMRTG", "GESAN", "ALFAS", "MIATK", "YEOTK", "KONTR", "CRDFA"
+];
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<AdminTab>(null);
@@ -54,6 +60,9 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
 
   const [universe, setUniverse] = useState<{ symbol: string; name: string }[]>([]);
+  const [activeUniverseTokens, setActiveUniverseTokens] = useState<string[]>([]);
+  const [isSavingUniverse, setIsSavingUniverse] = useState(false);
+
   const [previewSymbol, setPreviewSymbol] = useState('GARAN');
   const [previewConfig, setPreviewConfig] = useState<{ interval: string; period: string }>({
     interval: '4h',
@@ -68,11 +77,8 @@ export default function AdminDashboard() {
   const loadRules = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/v1/rules');
-      if (res.ok) {
-        const data = await res.json();
-        setRules(data);
-      }
+      const data = await fetchRules();
+      setRules(data);
     } catch (error) {
       console.warn('Failed to fetch rules:', error);
     } finally {
@@ -84,6 +90,7 @@ export default function AdminDashboard() {
     try {
       const data = await fetchUniverse();
       setUniverse(data);
+      setActiveUniverseTokens(data.map((d: any) => d.symbol));
     } catch (error) {
       console.warn('Failed to load stock universe:', error);
     }
@@ -121,7 +128,7 @@ export default function AdminDashboard() {
         setPreviewData(data);
       } catch (error: any) {
         if (error?.name !== 'AbortError') {
-          console.warn('Önizleme verisi alınamadı:', error?.message);
+          console.warn('Preview data could not be loaded:', error?.message);
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -162,14 +169,31 @@ export default function AdminDashboard() {
     if (!window.confirm('Bu kuralı silmek istediğinize emin misiniz?')) return;
     
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/rules/${id}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        setRules(prev => prev.filter(r => r.id !== id));
-      }
+      await deleteRule(id);
+      setRules(prev => prev.filter(r => r.id !== id));
     } catch (error) {
       console.warn('Failed to delete rule:', error);
+    }
+  };
+
+  const toggleUniverseStock = (sym: string) => {
+    setActiveUniverseTokens(prev => 
+      prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]
+    );
+  };
+
+  const handleSaveUniverse = async () => {
+    setIsSavingUniverse(true);
+    try {
+      if (updateActiveUniverse) {
+        await updateActiveUniverse(activeUniverseTokens);
+        alert("BIST Evreni başarıyla güncellendi! Arka plan tarayıcısı yeni listeyi işleyecek.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Evren güncellenirken API modülü eksik olduğu için hata oluştu.");
+    } finally {
+      setIsSavingUniverse(false);
     }
   };
 
@@ -184,34 +208,21 @@ export default function AdminDashboard() {
   const getHeaderInfo = () => {
     switch (activeTab) {
       case 'rules':
-        return {
-          title: 'Kural Motoru Yönetimi & Canlı Simülasyon',
-          subtitle: 'Çoklu zaman diliminde (5dk, 15dk, 4s, 1g) RSI düşen trend kırılımı ve hareketli ortalama kurallarını yönetin.'
-        };
+        return { title: 'Kural Motoru Yönetimi & Canlı Simülasyon', subtitle: 'Çoklu zaman diliminde (5dk, 15dk, 4s, 1g) RSI düşen trend kırılımı ve hareketli ortalama kurallarını yönetin.' };
       case 'users':
-        return {
-          title: 'Kullanıcı Yönetimi',
-          subtitle: 'Kayıtlı kullanıcıları, abonelik paketlerini ve yetkileri görüntüleyin.'
-        };
+        return { title: 'Kullanıcı Yönetimi', subtitle: 'Kayıtlı kullanıcıları, abonelik paketlerini ve yetkileri görüntüleyin.' };
       case 'settings':
-        return {
-          title: 'Sistem Ayarları',
-          subtitle: 'BIST hisse evrenini, veri çekim periyotlarını ve bildirim kanallarını yapılandırın.'
-        };
+        return { title: 'Sistem Ayarları & BIST Evreni', subtitle: 'BIST hisse evrenini, veri çekim periyotlarını ve tarama listesini yapılandırın.' };
       default:
-        return {
-          title: 'Yönetim Merkezi',
-          subtitle: 'BIST Tracker sistem yönetimi ve algoritmik kontrol paneli.'
-        };
+        return { title: 'Yönetim Merkezi', subtitle: 'BIST Tracker sistem yönetimi ve algoritmik kontrol paneli.' };
     }
   };
 
   const headerInfo = getHeaderInfo();
 
   return (
-    <div className="min-h-screen flex bg-[#0b0e14] text-slate-200 font-sans">
+    <div className="min-h-screen flex bg-[#0b0e14] text-slate-200 font-sans overflow-x-hidden">
       
-      {/* Admin Sidebar */}
       <aside className="w-64 border-r border-slate-800/80 bg-[#12161f] flex flex-col shrink-0">
         <div className="h-16 flex items-center px-6 border-b border-slate-800/80">
           <div 
@@ -246,7 +257,7 @@ export default function AdminDashboard() {
                 : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-100 hover:translate-x-1'
             }`}
           >
-            <Activity className="h-4 w-4" />
+            <Sliders className="h-4 w-4" />
             <span className="text-sm font-medium">Kural Motoru</span>
           </button>
 
@@ -291,10 +302,8 @@ export default function AdminDashboard() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
         
-        {/* Topbar */}
         <header className="h-16 flex items-center justify-between px-8 border-b border-slate-800/80 bg-[#0b0e14]/80 backdrop-blur-md">
           <div>
             <h1 className="text-lg font-semibold text-slate-100">{headerInfo.title}</h1>
@@ -306,10 +315,8 @@ export default function AdminDashboard() {
           )}
         </header>
 
-        {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-8">
           
-          {/* 1. WELCOME SCREEN */}
           {activeTab === null && (
             <div className="max-w-5xl mx-auto mt-8 space-y-8">
               <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#12161f] to-[#0f131a] p-8 shadow-2xl">
@@ -393,11 +400,9 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* 2. RULE ENGINE TAB */}
           {activeTab === 'rules' && (
             <div className="max-w-[1440px] mx-auto grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
               
-              {/* Left Column (5 Cols): Rules List */}
               <div className="xl:col-span-5 space-y-6">
                 {loading ? (
                   <div className="h-64 flex items-center justify-center border border-slate-800/80 rounded-xl bg-[#12161f]/50 text-sm text-slate-500">
@@ -408,11 +413,9 @@ export default function AdminDashboard() {
                 )}
               </div>
 
-              {/* Right Column (7 Cols): Wide Live Chart Preview & Rule Simulation */}
               <div className="xl:col-span-7 space-y-6">
                 <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-6 shadow-2xl backdrop-blur-md">
                   
-                  {/* Top Bar: Title & Searchable Universe Stock Selector */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4 mb-4">
                     <div>
                       <div className="flex items-center space-x-2">
@@ -426,7 +429,6 @@ export default function AdminDashboard() {
                       </p>
                     </div>
 
-                    {/* Searchable Stock Selector */}
                     <div className="relative w-full sm:w-64">
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -476,7 +478,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Dual Time Controls: Candle Interval (5Dk-1G) & Historical Range (1A, 3A, 6A, 1Y, 2Y, 5Y) */}
                   <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div className="flex items-center space-x-2">
                       <span className="text-[11px] font-medium text-slate-400">Mum:</span>
@@ -520,7 +521,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Selected Stock Price, Funnel Status & Total Simulated Score Banner */}
                   <div className="flex flex-wrap items-center justify-between gap-4 bg-[#161b26] p-4 rounded-xl border border-slate-800/90 mb-5">
                     <div>
                       <div className="flex items-center space-x-2.5">
@@ -566,7 +566,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Lightweight Charts with Indicator Overlays & Synchronized RSI Trendline Sub-Pane */}
                   <div className="w-full rounded-xl border border-slate-800/80 bg-[#0b0e14]/60 p-3 min-h-[460px] flex items-center justify-center">
                     {loadingPreview ? (
                       <div className="flex items-center space-x-2 text-sm font-mono text-slate-400">
@@ -585,95 +584,63 @@ export default function AdminDashboard() {
                     )}
                   </div>
 
-                  {/* Live Multi-Timeframe Rule Evaluation Breakdown */}
-                  <div className="mt-6 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                        {previewSymbol} Çoklu Zaman Dilimi Kural Sonuçları
-                      </h4>
-                      <span className="text-[11px] text-slate-500">
-                        (Her kural kendi tanımlandığı mum periyodunda değerlendirilir)
-                      </span>
-                    </div>
-
-                    {!previewData?.rules_breakdown || previewData.rules_breakdown.length === 0 ? (
-                      <div className="p-4 rounded-lg border border-slate-800 bg-[#161b26]/50 text-xs text-slate-500 text-center">
-                        Henüz aktif kural bulunmuyor. Sağ üstten yeni bir kural ekleyerek simülasyonu başlatın.
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {previewData.rules_breakdown.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center justify-between p-3 rounded-lg bg-[#161b26]/80 border border-slate-800/80"
-                          >
-                            <div className="flex items-center space-x-3">
-                              {item.is_met ? (
-                                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                              ) : (
-                                <XCircle className="h-4 w-4 text-slate-600 shrink-0" />
-                              )}
-                              <div>
-                                <div className="flex items-center space-x-2">
-                                  <span className={`text-xs font-semibold ${item.is_met ? 'text-slate-100' : 'text-slate-400'}`}>
-                                    {item.name}
-                                  </span>
-                                  {item.timeframe && (
-                                    <span className="text-[10px] font-mono bg-purple-500/15 text-purple-300 border border-purple-500/30 px-1.5 py-0.5 rounded uppercase">
-                                      {item.timeframe}
-                                    </span>
-                                  )}
-                                  {item.is_primary_filter && (
-                                    <span className="text-[10px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">
-                                      ANA FİLTRE
-                                    </span>
-                                  )}
-                                </div>
-                                {item.current_value !== undefined && (
-                                  <div className="text-[11px] font-mono text-slate-500 mt-0.5">
-                                    Anlık: <span className="text-slate-300">{item.current_value}</span> | Çizgi/Hedef: <span className="text-slate-300">{item.target_value}</span>
-                                    {item.slope !== undefined && item.slope !== null && (
-                                      <span className="ml-2 text-blue-400">(Eğim: {item.slope} | Tepe RSI: {item.peak_rsi})</span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            <span className={`text-xs font-mono font-semibold px-2.5 py-1 rounded ${
-                              item.is_met
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                : 'bg-slate-800/60 text-slate-500'
-                            }`}>
-                              {item.is_met ? `+${item.earned_score.toFixed(2)} Puan` : '0.00 Puan'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
                 </div>
               </div>
-
             </div>
           )}
 
-          {/* 3. USERS TAB PLACEHOLDER */}
+          {activeTab === 'settings' && (
+            <div className="max-w-[1440px] mx-auto space-y-6">
+              <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-8 shadow-2xl backdrop-blur-md">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-5 mb-6">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-100 flex items-center space-x-2">
+                      <Database className="h-5 w-5 text-emerald-400" />
+                      <span>BIST Hisse Evreni Seçimi</span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Arka planda taranacak ve otomatik skorlanacak hisseleri belirleyin. Yeşil olanlar aktiftir.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveUniverse}
+                    disabled={isSavingUniverse}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-colors"
+                  >
+                    {isSavingUniverse ? 'Kaydediliyor...' : 'Evreni Kaydet'}
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2.5 justify-center mt-8 pb-4">
+                  {BIST_UNIVERSE_FULL.map(sym => {
+                    const isActive = activeUniverseTokens.includes(sym);
+                    return (
+                      <button
+                        key={sym}
+                        type="button"
+                        onClick={() => toggleUniverseStock(sym)}
+                        className={`flex items-center justify-between space-x-2 px-3 py-1.5 rounded-md text-[11px] font-mono font-bold transition-all duration-200 cursor-pointer ${
+                          isActive 
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.15)]' 
+                            : 'bg-[#e2e8f0]/90 text-slate-800 border border-transparent hover:bg-white'
+                        }`}
+                      >
+                        <span className="tracking-wide">{sym}</span>
+                        {isActive ? <X className="h-3 w-3 opacity-70" /> : <span className="text-slate-500 opacity-60 text-lg leading-none mb-0.5">+</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'users' && (
             <div className="max-w-4xl mx-auto rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-12 text-center">
               <Users className="h-12 w-12 text-slate-600 mx-auto mb-3" />
               <h3 className="text-base font-semibold text-slate-200">Kullanıcı Yönetimi Modülü</h3>
               <p className="text-xs text-slate-500 mt-1">Kural motoru testleri tamamlandıktan sonra bu ekran aktif edilecektir.</p>
-            </div>
-          )}
-
-          {/* 4. SETTINGS TAB PLACEHOLDER */}
-          {activeTab === 'settings' && (
-            <div className="max-w-4xl mx-auto rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-12 text-center">
-              <Settings className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-              <h3 className="text-base font-semibold text-slate-200">Sistem ve Hisse Evreni Ayarları</h3>
-              <p className="text-xs text-slate-500 mt-1">BIST450 hisse seçim arayüzü ilerleyen aşamada buraya entegre edilecektir.</p>
             </div>
           )}
 

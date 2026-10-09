@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { createRule } from '@/services/api';
-import { Plus, Filter } from 'lucide-react';
+import { Plus, Filter, Sparkles } from 'lucide-react';
 
 interface CreateRuleDialogProps {
   onRuleCreated?: () => void;
@@ -85,7 +85,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
 
   const [indicator1, setIndicator1] = useState('RSI');
   const [ind1Length, setInd1Length] = useState('14');
-  const [condition, setCondition] = useState('crosses_above');
+  const [condition, setCondition] = useState('>');
   const [targetType, setTargetType] = useState<'static' | 'indicator'>('indicator');
   const [staticValue, setStaticValue] = useState('30');
 
@@ -97,33 +97,33 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
   const [trendMinPeak, setTrendMinPeak] = useState('55');
   const [trendSlope, setTrendSlope] = useState(''); // Optional manual negative slope
 
-  const [scoreImpact, setScoreImpact] = useState('35.00');
+  const [scoreImpact, setScoreImpact] = useState('25.00');
 
   // Quick preset loader for Consultant's 4h RSI Breakout or 5m/15m MA Crossover
   const applyPreset = (preset: 'rsi_breakout_4h' | 'ma_cross_15m' | 'ma_cross_5m') => {
     if (preset === 'rsi_breakout_4h') {
-      setName('4S RSI Düşen Trend Kırılımı (Mavi Çizgi)');
+      setName('4S RSI (14) Düşen Trend Kırılımı (Mavi Çizgi)');
       setTimeframe('4h');
       setIsPrimaryFilter(true);
       setIndicator1('RSI');
       setInd1Length('14');
-      setCondition('crosses_above');
+      setCondition('>');
       setTargetType('indicator');
       setIndicator2('RSI_TRENDLINE');
       setTrendLookback('60');
       setTrendMinPeak('55');
-      setScoreImpact('40.00');
+      setScoreImpact('25.00');
     } else if (preset === 'ma_cross_15m') {
-      setName('15Dk MA(9) Yukarı Keser MA(14)');
+      setName('Kısa Vade: MA(9) > MA(14) Trendi');
       setTimeframe('15m');
       setIsPrimaryFilter(false);
       setIndicator1('SMA');
       setInd1Length('9');
-      setCondition('crosses_above');
+      setCondition('>');
       setTargetType('indicator');
       setIndicator2('SMA');
       setInd2Length('14');
-      setScoreImpact('30.00');
+      setScoreImpact('10.00');
     } else if (preset === 'ma_cross_5m') {
       setName('5Dk MA(9) Yukarı Keser MA(21)');
       setTimeframe('5m');
@@ -134,7 +134,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
       setTargetType('indicator');
       setIndicator2('SMA');
       setInd2Length('21');
-      setScoreImpact('30.00');
+      setScoreImpact('10.00');
     }
   };
 
@@ -190,6 +190,28 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
     }
   };
 
+  const handleSeedConsultantSuite = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch('http://127.0.0.1:8000/api/v1/rules/seed-defaults', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (res.ok) {
+        setOpen(false);
+        if (onRuleCreated) onRuleCreated();
+      }
+    } catch (error) {
+      console.error('Failed to seed default consultant rules:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const showInd1Period = indicator1 === 'SMA' || indicator1 === 'EMA' || indicator1 === 'RSI';
   const showInd2Period = indicator2 === 'SMA' || indicator2 === 'EMA' || indicator2 === 'RSI';
 
@@ -208,11 +230,12 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
           </DialogTitle>
         </DialogHeader>
 
-        {/* Quick Strategy Presets from Business Meeting */}
-        <div className="pt-1">
-          <span className="text-[11px] font-medium text-slate-400 block mb-2">
-            Hızlı Şablonlar (Tek Tıkla Doldur):
-          </span>
+        {/* Highlighted Quick Strategy Presets & 1-Click Full Suite Seeder */}
+        <div className="rounded-xl border border-blue-500/30 bg-[#161b26] p-3.5 space-y-3">
+          <div className="flex items-center space-x-1.5 text-xs font-semibold text-blue-400">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Hızlı Şablonlar (Tek Tıkla Doldur):</span>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -226,7 +249,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
               onClick={() => applyPreset('ma_cross_15m')}
               className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
             >
-              📈 15Dk MA(9) x MA(14)
+              📈 15Dk MA(9) &gt; MA(14)
             </button>
             <button
               type="button"
@@ -236,9 +259,24 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
               🚀 5Dk MA(9) x MA(21)
             </button>
           </div>
+
+          {/* 1-Click Full 8-Rule Consultant Suite Button */}
+          <div className="pt-2.5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-400">
+              RSI + Stoch + MACD + 6 Adet MA (9-200) + Bollinger (22,2):
+            </span>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={handleSeedConsultantSuite}
+              className="text-[11px] font-mono font-semibold bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 rounded-lg px-3 py-1.5 transition-all cursor-pointer shrink-0"
+            >
+              {loading ? 'Yükleniyor...' : '📦 Tüm Paketi Tek Tıkla Yükle (8 Kural)'}
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+        <form onSubmit={handleSubmit} className="space-y-4 pt-1">
           {/* Rule Name */}
           <div className="space-y-1.5">
             <Label className="text-xs font-medium text-slate-300">Kural Adı / Açıklaması</Label>
@@ -454,7 +492,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
               step="0.01"
               value={scoreImpact}
               onChange={(e) => setScoreImpact(e.target.value)}
-              placeholder="Örn: 35.00 veya 12.50"
+              placeholder="Örn: 25.00 veya 12.50"
               className="border-slate-700/80 bg-[#161b26] text-slate-100 font-mono transition-colors hover:border-slate-600 focus:border-blue-500"
               required
             />

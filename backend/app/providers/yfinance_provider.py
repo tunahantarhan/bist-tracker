@@ -99,11 +99,12 @@ class YFinanceProvider(BaseDataProvider):
         req_days = PERIOD_TO_DAYS.get(requested_period, 366)
 
         # Always fetch at least 6mo for 1h/4h and 1y for 1d so sub-periods (1A, 3A, 6A) slice instantly from RAM
+        # Always fetch at least 1y for 1h/4h and 2y for 1d so MA(100) and MA(200) always have >= 200 bars!
         fetch_period = requested_period
-        if yf_interval == "1h" and req_days < 186:
-            fetch_period = "6mo"
-        elif yf_interval == "1d" and req_days < 366:
+        if yf_interval == "1h" and req_days < 366:
             fetch_period = "1y"
+        elif yf_interval == "1d" and req_days < 732:
+            fetch_period = "2y"
         fetch_days = PERIOD_TO_DAYS.get(fetch_period, req_days)
 
         master_key = f"{formatted_symbol}_{yf_interval}"

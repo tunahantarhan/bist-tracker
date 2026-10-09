@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ShieldAlert, TrendingUp, Lock, Mail, ChevronRight, User, CheckCircle2 } from 'lucide-react';
+import { API_URL } from '@/services/api';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -12,7 +13,6 @@ export default function AuthPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
-  // Custom Notification (Toast) State
   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -28,7 +28,7 @@ export default function AuthPage() {
       return;
     }
 
-    const endpoint = isLogin ? '/api/v1/auth/login' : '/api/v1/auth/register';
+    const endpoint = isLogin ? '/auth/login' : '/auth/register';
     const payload = isLogin 
       ? { email, password } 
       : { 
@@ -40,7 +40,7 @@ export default function AuthPage() {
         };
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000${endpoint}`, {
+      const res = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -57,7 +57,6 @@ export default function AuthPage() {
       const data = await res.json();
       
       if (isLogin) {
-        // Store user slug, access token, and admin status in localStorage
         if (data.first_name && data.last_name) {
           localStorage.setItem('user_slug', `${data.first_name.toLowerCase()}-${data.last_name.toLowerCase()}`);
         }
@@ -76,7 +75,6 @@ export default function AuthPage() {
   return (
     <div className="min-h-screen flex bg-[#0b0e14] text-slate-200 relative overflow-hidden">
       
-      {/* Toast Notifications */}
       {toast && (
         <div className={`fixed bottom-8 right-8 z-50 flex items-center p-4 rounded-xl shadow-2xl border backdrop-blur-md transition-all duration-300 animate-in slide-in-from-bottom-5 ${
           toast.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
@@ -86,7 +84,6 @@ export default function AuthPage() {
         </div>
       )}
 
-      {/* Left Panel - Brand and Feature Showcase */}
       <div className="hidden lg:flex w-1/2 flex-col justify-between p-12 bg-[#12161f] border-r border-slate-800/80 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
           <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-blue-600/10 blur-[120px] rounded-full"></div>
@@ -94,8 +91,8 @@ export default function AuthPage() {
 
         <div className="relative z-10">
           <div className="flex items-center space-x-3 mb-16">
-            <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-[0_0_16px_#2563eb]">
-              <span className="font-mono text-lg font-black text-white">B</span>
+            <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-[0_0_12px_#2563eb]">
+              <span className="font-mono text-sm font-black text-white">B</span>
             </div>
             <span className="text-xl font-bold text-slate-100 tracking-tight">BIST Rule Engine</span>
           </div>
@@ -132,7 +129,6 @@ export default function AuthPage() {
         </div>
       </div>
 
-      {/* Right Panel - Form Section */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12">
         <div className="w-full max-w-md space-y-8">
           
@@ -167,7 +163,6 @@ export default function AuthPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            
             {!isLogin && (
               <div className="flex space-x-4">
                 <div className="space-y-1.5 w-1/2">

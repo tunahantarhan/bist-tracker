@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { IndicatorOverlay, RsiPaneData } from '@/services/api';
+import { Eye, EyeOff } from 'lucide-react';
 
 interface CandleData {
   time: string | number;
@@ -28,11 +29,48 @@ export default function ChartWrapper({
   const mainChartRef = useRef<HTMLDivElement>(null);
   const rsiChartRef = useRef<HTMLDivElement>(null);
 
+  const [visibleNames, setVisibleNames] = useState<Record<string, boolean>>({});
+  const [showAllOverlays, setShowAllOverlays] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!indicators || indicators.length === 0) return;
+    setVisibleNames((prev) => {
+      const next = { ...prev };
+      indicators.forEach((ind, idx) => {
+        if (next[ind.name] === undefined) {
+          next[ind.name] = idx < 2;
+        }
+      });
+      return next;
+    });
+  }, [indicators]);
+
+  const toggleSingleIndicator = (name: string) => {
+    setVisibleNames((prev) => ({
+      ...prev,
+      [name]: !prev[name],
+    }));
+  };
+
+  const handleToggleAll = () => {
+    const nextState = !showAllOverlays;
+    setShowAllOverlays(nextState);
+    const updated: Record<string, boolean> = {};
+    indicators.forEach((ind) => {
+      updated[ind.name] = nextState;
+    });
+    setVisibleNames(updated);
+  };
+
   useEffect(() => {
     if (!mainChartRef.current) return;
 
+    const initialWidth = mainChartRef.current.clientWidth || 600;
+
     // 1. MAIN PRICE & OVERLAY CHART
     const mainChart = createChart(mainChartRef.current, {
+      width: initialWidth,
+      height,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: '#94a3b8',
@@ -53,7 +91,6 @@ export default function ChartWrapper({
       rightPriceScale: {
         borderColor: 'rgba(30, 41, 59, 0.8)',
       },
-      height,
     });
 
     const candleSeries =
@@ -91,19 +128,23 @@ export default function ChartWrapper({
 
     if (indicators && indicators.length > 0) {
       indicators.forEach((ind) => {
+        if (!visibleNames[ind.name]) return;
+
         const lineSeries =
           typeof (mainChart as any).addLineSeries === 'function'
             ? (mainChart as any).addLineSeries({
                 color: ind.color,
                 lineWidth: 2,
                 priceLineVisible: false,
-                lastValueVisible: true,
+                lastValueVisible: false,
+                crosshairMarkerVisible: true,
               })
             : mainChart.addSeries(LineSeries, {
                 color: ind.color,
                 lineWidth: 2,
                 priceLineVisible: false,
-                lastValueVisible: true,
+                lastValueVisible: false,
+                crosshairMarkerVisible: true,
               });
 
         const mappedLine = ind.data.map((d) => ({
@@ -126,6 +167,8 @@ export default function ChartWrapper({
 
     if (rsiChartRef.current && rsiPane && rsiPane.rsi && rsiPane.rsi.length > 0) {
       rsiChart = createChart(rsiChartRef.current, {
+        width: rsiChartRef.current.clientWidth || initialWidth,
+        height: 165,
         layout: {
           background: { type: ColorType.Solid, color: 'transparent' },
           textColor: '#94a3b8',
@@ -146,10 +189,8 @@ export default function ChartWrapper({
         rightPriceScale: {
           borderColor: 'rgba(30, 41, 59, 0.8)',
         },
-        height: 165,
       });
 
-      // Purple RSI(14) curve (like TradingView default)
       const rsiLineSeries =
         typeof (rsiChart as any).addLineSeries === 'function'
           ? (rsiChart as any).addLineSeries({
@@ -175,7 +216,6 @@ export default function ChartWrapper({
 
       rsiLineSeries.setData(uniqueRsi);
 
-      // Horizontal 3-Zone Reference Lines: 70 (Upper), 50 (Middle), 30 (Lower)
       [
         { price: 70, color: 'rgba(148, 163, 184, 0.45)', title: '70' },
         { price: 50, color: 'rgba(148, 163, 184, 0.30)', title: '50' },
@@ -185,13 +225,12 @@ export default function ChartWrapper({
           price: lvl.price,
           color: lvl.color,
           lineWidth: 1,
-          lineStyle: 2, // Dashed
+          lineStyle: 2,
           axisLabelVisible: true,
           title: lvl.title,
         });
       });
 
-      // Blue Descending Trendline (Mavi Çizgi)
       if (rsiPane.trendline && rsiPane.trendline.length > 1) {
         const trendSeries =
           typeof (rsiChart as any).addLineSeries === 'function'
@@ -221,7 +260,6 @@ export default function ChartWrapper({
 
       rsiChart.timeScale().fitContent();
 
-      // Synchronize horizontal zoom/pan between Main Chart and RSI Chart
       mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (range && rsiChart) {
           rsiChart.timeScale().setVisibleLogicalRange(range);
@@ -234,43 +272,92 @@ export default function ChartWrapper({
       });
     }
 
-    const handleResize = () => {
-      if (mainChartRef.current) {
+    // Use ResizeObserver on the container itself so that when the container's size changes due to 
+    // flex/grid layout shifts, the chart resizes immediately
+    const updateChartDimensions = () => {
+      if (mainChartRef.current && mainChartRef.current.clientWidth > 0) {
         mainChart.applyOptions({ width: mainChartRef.current.clientWidth });
       }
-      if (rsiChartRef.current && rsiChart) {
+      if (rsiChartRef.current && rsiChart && rsiChartRef.current.clientWidth > 0) {
         rsiChart.applyOptions({ width: rsiChartRef.current.clientWidth });
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    const resizeObserver = new ResizeObserver(() => {
+      // To wait for flexbox render time, we use a small delay before updating chart dimensions
+      requestAnimationFrame(updateChartDimensions);
+    });
+
+    if (mainChartRef.current) resizeObserver.observe(mainChartRef.current);
+    if (rsiChartRef.current) resizeObserver.observe(rsiChartRef.current);
+
+    // At the first mount, force the chart to fit the container's width
+    setTimeout(updateChartDimensions, 50);
+
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       mainChart.remove();
       if (rsiChart) rsiChart.remove();
     };
-  }, [candles, indicators, rsiPane, height]);
+  }, [candles, indicators, rsiPane, height, visibleNames]);
+
+  const activeCount = indicators.filter((i) => visibleNames[i.name]).length;
 
   return (
-    <div className="w-full space-y-2">
+    <div className="w-full space-y-2 overflow-hidden">
+      {/* Interactive Indicator Toggle Bar */}
+      {indicators && indicators.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/60">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {indicators.map((ind) => {
+              const isVisible = !!visibleNames[ind.name];
+              return (
+                <button
+                  key={ind.name}
+                  type="button"
+                  onClick={() => toggleSingleIndicator(ind.name)}
+                  title={isVisible ? 'Grafikte Gizle' : 'Grafikte Göster'}
+                  className={`flex items-center space-x-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition-all cursor-pointer select-none ${
+                    isVisible
+                      ? 'bg-[#161b26] border-slate-700 text-slate-100 shadow-sm'
+                      : 'bg-[#0b0e14]/40 border-slate-800/60 text-slate-500 opacity-60 hover:opacity-90'
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0 transition-transform"
+                    style={{
+                      backgroundColor: isVisible ? ind.color : '#475569',
+                      transform: isVisible ? 'scale(1)' : 'scale(0.8)',
+                    }}
+                  />
+                  <span className={isVisible ? '' : 'line-through'}>{ind.name}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleToggleAll}
+            className="flex items-center space-x-1.5 rounded-md border border-slate-700/80 bg-[#161b26] hover:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition-colors cursor-pointer shrink-0"
+          >
+            {activeCount > 0 ? (
+              <>
+                <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                <span>Çizgileri Gizle ({activeCount}/{indicators.length})</span>
+              </>
+            ) : (
+              <>
+                <Eye className="h-3.5 w-3.5 text-blue-400" />
+                <span>Tümünü Göster</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Main Price Chart */}
       <div className="relative w-full">
-        {indicators && indicators.length > 0 && (
-          <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-2 pointer-events-none">
-            {indicators.map((ind) => (
-              <div
-                key={ind.name}
-                className="flex items-center space-x-1.5 rounded bg-[#0b0e14]/85 border border-slate-800 px-2 py-0.5 text-[11px] font-mono text-slate-200 backdrop-blur-sm"
-              >
-                <span
-                  className="h-2 w-2 rounded-full shrink-0"
-                  style={{ backgroundColor: ind.color }}
-                />
-                <span>{ind.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
         <div ref={mainChartRef} className="w-full" />
       </div>
 
