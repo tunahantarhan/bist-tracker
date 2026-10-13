@@ -7,8 +7,8 @@ from typing import List, Dict, Any, Tuple
 from app.providers.base import BaseDataProvider
 
 DEFAULT_PERIOD_BY_INTERVAL = {
-    "5m": "1mo",
-    "15m": "1mo",
+    "5m": "5d",
+    "15m": "5d",
     "1h": "6mo",
     "4h": "6mo",
     "1d": "1y",
@@ -16,14 +16,15 @@ DEFAULT_PERIOD_BY_INTERVAL = {
 }
 
 INTRADAY_MAX_PERIODS = {
-    "5m": {"1mo"},
-    "15m": {"1mo"},
+    "5m": {"5d", "1mo"},
+    "15m": {"5d", "1mo"},
     "1h": {"1mo", "3mo", "6mo", "1y", "2y"},
     "4h": {"1mo", "3mo", "6mo", "1y", "2y"},
 }
 
 # Days mapping for instant in-memory slicing without hitting Yahoo Finance again
 PERIOD_TO_DAYS = {
+    "5d": 5,
     "1mo": 31,
     "3mo": 93,
     "6mo": 186,
@@ -39,7 +40,7 @@ _CACHE_TTL = 180.0  # 3 minutes cache for instant UI switching
 
 # Per-symbol locks + Semaphore(4) instead of a single global blocking lock
 _symbol_locks: Dict[str, asyncio.Lock] = {}
-_yf_semaphore = asyncio.Semaphore(4)
+_yf_semaphore = asyncio.Semaphore(16)
 
 
 def _get_symbol_lock(symbol: str) -> asyncio.Lock:

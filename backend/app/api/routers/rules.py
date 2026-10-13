@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import pandas as pd
+from pydantic import BaseModel
+from typing import Dict, Any, Optional
 
 from app.core.database import get_db
 from app.models.rule import Rule
@@ -45,6 +47,23 @@ def invalidate_overview_cache():
     _overview_cache["data"] = None
 
 
+# Rule Update Model for PUT requests (structure of data coming from the frontend)
+class RulePutUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    timeframe: Optional[str] = None
+    is_primary_filter: Optional[bool] = None
+    indicator_1: Optional[str] = None
+    indicator_1_params: Optional[Dict[str, Any]] = None
+    condition: Optional[str] = None
+    target_type: Optional[str] = None
+    static_value: Optional[float] = None
+    indicator_2: Optional[str] = None
+    indicator_2_params: Optional[Dict[str, Any]] = None
+    score_impact: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
 @router.get("/rules", response_model=list[RuleResponse])
 async def get_rules(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -64,7 +83,7 @@ async def create_rule(rule_in: RuleCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/rules/{rule_id}", response_model=RuleResponse)
-async def update_rule(rule_id: int, rule_in: RuleUpdate, db: AsyncSession = Depends(get_db)):
+async def patch_rule(rule_id: int, rule_in: RuleUpdate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Rule).where(Rule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:
@@ -78,6 +97,24 @@ async def update_rule(rule_id: int, rule_in: RuleUpdate, db: AsyncSession = Depe
     await db.refresh(rule)
     invalidate_overview_cache()
     return rule
+
+
+# New endpoint for updating a rule using PUT method
+@router.put("/rules/{rule_id}", response_model=RuleResponse)
+async def update_rule(rule_id: int, rule_update: RulePutUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Rule).where(Rule.id == rule_id))
+    db_rule = result.scalar_one_or_none()
+    if not db_rule:
+        raise HTTPException(status_code=404, detail="Kural bulunamadı")
+
+    update_data = rule_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_rule, key, value)
+
+    await db.commit()
+    await db.refresh(db_rule)
+    invalidate_overview_cache()
+    return db_rule
 
 
 @router.delete("/rules/{rule_id}")
@@ -106,7 +143,7 @@ async def seed_consultant_default_rules(db: AsyncSession = Depends(get_db)):
             "condition": ">",
             "target_type": "indicator",
             "indicator_2": "RSI_TRENDLINE",
-            "indicator_2_params": {"length": 14, "lookback": 60, "min_peak": 55.0},
+            "indicator_2_params": {"length": 14, "lookback": 60, "min_peak": 55.0, "max_trend_end": 40.0},
             "score_impact": 25.0,
             "is_active": True,
         },
@@ -240,12 +277,14 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
     required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
     if not required_tfs:
         required_tfs = {"4h"}
+        
+    # Force 1d fetch for accurate global daily change calculation
+    required_tfs.add("1d")
 
     active_stocks_res = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
     symbols = [s.symbol for s in active_stocks_res.scalars().all()]
-    
     if not symbols:
-        symbols = list(TICKER_INFO.keys())
+        symbols = ["THYAO", "AKBNK", "KCHOL", "TUPRS", "GARAN"] # Fallback
 
     async def _evaluate_single_symbol(sym: str):
         try:
@@ -262,10 +301,10 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
             if default_df.empty:
                 return None
 
-            closes = default_df["Close"].astype(float).tolist()
-            last_close = round(closes[-1], 2)
-            prev_close = closes[-2] if len(closes) > 1 else last_close
-            change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
+            # Real-time Price instead of Candle Graph Close
+            price_info = await provider.fetch_current_price(sym)
+            last_close = price_info.get("current_price", 0.0)
+            change_pct = price_info.get("change_pct", 0.0)
 
             eval_res = {
                 "total_score": 0.0,
@@ -356,6 +395,9 @@ async def get_market_data(
         ]
 
         required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
+        # Force 1d fetch for accurate top-level change_pct regardless of the selected chart interval
+        required_tfs.add("1d")
+        
         dataframes_by_tf = {interval: chart_df}
         missing_tfs = [tf for tf in required_tfs if tf not in dataframes_by_tf]
 
@@ -367,6 +409,18 @@ async def get_market_data(
             for tf, res_df in zip(missing_tfs, fetched_dfs):
                 if isinstance(res_df, pd.DataFrame) and not res_df.empty:
                     dataframes_by_tf[tf] = res_df
+
+        # Calculate absolute price and change_pct from the 1d timeframe exclusively
+        daily_df = dataframes_by_tf.get("1d")
+        if daily_df is not None and not daily_df.empty:
+            daily_closes = daily_df["Close"].astype(float).round(2).tolist()
+            last_close = daily_closes[-1]
+            prev_close = daily_closes[-2] if len(daily_closes) > 1 else last_close
+        else:
+            last_close = closes[-1]
+            prev_close = closes[-2] if len(closes) > 1 else last_close
+            
+        change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
 
         evaluation = {
             "total_score": 0.0,

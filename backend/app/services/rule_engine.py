@@ -9,18 +9,18 @@ class RuleEngine:
         close: pd.Series, params: Dict[str, Any] | None = None
     ) -> Tuple[pd.Series, Dict[str, Any]]:
         """
-        Mathematically models the visual 'Blue Descending RSI Trendline' (y = m*x + b).
-        1. Calculates RSI(length).
-        2. Finds the major peak (T1) within the lookback window (excluding the last 3 bars).
-        3. Finds the upper-envelope descending resistance line from T1 to the second anchor peak (T2)
-           prior to the latest bar, or uses an optional user-specified slope.
-        Returns the trendline as a pandas Series and metadata (slope, peak values, breakout status).
+        Decline Trendline:
+        1. Finds the main peak (T1).
+        2. Finds the best slope that limits the price from above by finding local peaks (T2) after T1.
+        3. Confirms that the tip of the trend does not fall into "bottom regions" (e.g., below 30).
         """
         params = params or {}
         rsi_length = int(params.get("length", params.get("rsi_length", 14)))
         lookback = int(params.get("lookback", 60))
         min_peak_rsi = float(params.get("min_peak", 55.0))
-        custom_slope = params.get("slope", None)  # Optional manual negative slope (e.g., -0.35)
+        
+        # Trendline is allowed to go down to 0-30
+        max_trend_end = float(params.get("max_trend_end", 30.0))
 
         rsi = ta.rsi(close, length=rsi_length)
         if rsi is None or len(rsi.dropna()) < 15:
@@ -28,7 +28,7 @@ class RuleEngine:
 
         n = len(rsi)
         start_idx = max(0, n - lookback)
-        search_end = n - 3  # Leave at least 3 bars after peak to form a descending line
+        search_end = n - 3
 
         if search_end <= start_idx + 2:
             start_idx = max(0, n - 30)
@@ -37,67 +37,85 @@ class RuleEngine:
         if window.dropna().empty:
             raise ValueError("Empty RSI window for trendline detection.")
 
-        # 1. Locate Primary Peak (T1)
+        # 1)
         peak_pos_rel = int(np.nanargmax(window.values))
         x1 = start_idx + peak_pos_rel
         y1 = float(rsi.iloc[x1])
 
-        # 2. Determine Slope (m)
-        if custom_slope is not None and float(custom_slope) < 0:
-            slope = float(custom_slope)
-            x2 = n - 2
-            y2 = y1 + slope * (x2 - x1)
-        else:
-            # Find the upper-envelope anchor point between x1+2 and n-2 (excluding current bar n-1 so breakout can happen)
-            best_slope = -0.25  # Default gentle downward slope fallback
-            found_anchor = False
-            best_x2 = x1 + 1
+        # 2)
+        best_slope = -float('inf')
+        found_t2 = False
+        t2_x = x1 + 1
+        t2_y = y1
 
-            # Search for the least-negative (highest resistance) downward slope that bounds intermediate bars
-            candidate_slopes = []
+        # Only find local peaks after the main peak (x1)
+        peaks = []
+        for idx in range(x1 + 2, n - 1):
+            val_prev = float(rsi.iloc[idx-1])
+            val_curr = float(rsi.iloc[idx])
+            val_next = float(rsi.iloc[idx+1])
+            if val_curr > val_prev and val_curr > val_next:
+                peaks.append((idx, val_curr))
+
+        # From the first peak, draw a tangent line to a second peak below it
+        for px, py in peaks:
+            if py < y1:  # The second peak must be below the first peak
+                s = (py - y1) / float(px - x1)
+                # To find the widest angle (the outermost/topmost) resistance line, take the max slope
+                if s > best_slope:
+                    best_slope = s
+                    t2_x = px
+                    t2_y = py
+                    found_t2 = True
+
+        # If there is no clear local peak, consider the best slope to the lowest point after the main peak
+        if not found_t2:
             for idx in range(x1 + 2, n - 1):
-                val = float(rsi.iloc[idx])
-                if np.isnan(val):
-                    continue
-                s = (val - y1) / float(idx - x1)
-                if -2.5 <= s <= -0.05:
-                    candidate_slopes.append((s, idx, val))
+                py = float(rsi.iloc[idx])
+                if py < y1:
+                    s = (py - y1) / float(idx - x1)
+                    if s > best_slope:
+                        best_slope = s
+                        t2_x = idx
+                        t2_y = py
+                        found_t2 = True
 
-            if candidate_slopes:
-                # Pick the upper bounding resistance line among valid negative slopes
-                candidate_slopes.sort(key=lambda item: item[0], reverse=True)
-                best_slope, best_x2, _ = candidate_slopes[0]
-                found_anchor = True
-
+        # If there is no trend or the slope is upward, assign a slightly downward invalid slope
+        if not found_t2 or best_slope >= 0:
+            slope = -0.1
+        else:
             slope = best_slope
-            x2 = best_x2 if found_anchor else n - 2
-            y2 = y1 + slope * (x2 - x1)
 
-        # 3. Build the Trendline Series from Peak (x1) to Present (n-1)
+        # 3)
         trend_values = np.full(n, np.nan)
         for idx in range(x1, n):
             line_val = y1 + slope * (idx - x1)
-            # Clamp visual line between 0 and 100
             trend_values[idx] = max(0.0, min(100.0, line_val))
 
         trend_series = pd.Series(trend_values, index=rsi.index)
+
+        # Tip of the trend (current value of the trend)
+        current_trend_val = trend_values[n - 1]
+
+        # Rule: The tip of the trend must have fallen into the defined bottom region (0-40)
+        is_low_enough = current_trend_val <= max_trend_end
+
         meta = {
             "peak_rsi": round(y1, 2),
-            "peak_qualifies": y1 >= min_peak_rsi,
+            "peak_qualifies": (y1 >= min_peak_rsi) and is_low_enough,
             "slope": round(float(slope), 3),
             "start_pos": x1,
             "end_pos": n - 1,
+            "t2_x": t2_x,
+            "t2_y": round(t2_y, 2) if found_t2 else None,
+            "current_trend_val": round(current_trend_val, 2)
         }
         return trend_series, meta
 
     @classmethod
-    def get_indicator_series(cls, df: pd.DataFrame, indicator: str, params: Dict[str, Any] | None) -> pd.Series:
-        """
-        Calculates the technical indicator series from OHLCV DataFrame.
-        Returns a pandas Series to support both static comparisons and crossover checks.
-        """
-        if df.empty or len(df) < 25:
-            raise ValueError("Insufficient historical data for indicator calculation.")
+    def get_indicator_series(cls, df: pd.DataFrame, indicator: str, params: Dict[str, Any] | None) -> pd.Series | None:
+        if df.empty or len(df) < 5:  # En azından kapanış verisi alacak kadar mum olmalı
+            return None
 
         params = params or {}
         close_col = "Close" if "Close" in df.columns else "close"
@@ -164,12 +182,9 @@ class RuleEngine:
 
     @classmethod
     def evaluate_single_rule(cls, df: pd.DataFrame, rule: Any) -> Tuple[bool, float, float, Dict[str, Any]]:
-        """
-        Evaluates a single dynamic rule against the stock's DataFrame.
-        Returns (is_condition_met, current_val_1, current_target_val, extra_meta).
-        """
         extra_meta: Dict[str, Any] = {}
         series_1 = cls.get_indicator_series(df, rule.indicator_1, rule.indicator_1_params)
+        
         if series_1 is None or len(series_1.dropna()) < 2:
             return False, 0.0, 0.0, extra_meta
 
@@ -213,7 +228,7 @@ class RuleEngine:
         else:
             raise ValueError(f"Unsupported condition operator: {cond}")
 
-        # If evaluating RSI_TRENDLINE, ensure the historical peak met the minimum RSI threshold
+        # While evaluating RSI Trendline, check the both conditions
         if extra_meta and not extra_meta.get("peak_qualifies", True):
             is_met = False
 
@@ -226,10 +241,6 @@ class RuleEngine:
         rules: List[Any],
         dataframes_by_tf: Dict[str, pd.DataFrame] | None = None,
     ) -> Dict[str, Any]:
-        """
-        Processes all active global rules across their respective timeframes (5m, 15m, 1h, 4h, 1d).
-        Enforces Two-Stage Funnel filtering if any active rule is marked as `is_primary_filter`.
-        """
         total_score = 0.0
         breakdown = []
         primary_filters_exist = any(getattr(r, "is_primary_filter", False) for r in rules)
