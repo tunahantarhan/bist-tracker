@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import StockSearch from '@/components/ui/StockSearch';
@@ -15,43 +15,24 @@ import {
   StockOverviewItem,
 } from '@/services/api';
 import {
-  User,
-  TrendingUp,
-  TrendingDown,
-  RefreshCw,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-  Activity,
-  Trash2,
-  LogOut,
-  ShieldCheck,
-  Filter,
-  Calendar,
-  Clock,
-  SlidersHorizontal,
-  Flame,
-  Trophy,
-  Gem,
-  X,
-  ChevronDown,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search
+  User, TrendingUp, TrendingDown, RefreshCw, CheckCircle2, XCircle,
+  Activity, Trash2, LogOut, ShieldCheck, Filter, Calendar, Clock,
+  SlidersHorizontal, Flame, Trophy, Gem, X, ChevronDown,
+  Search, Plus, ExternalLink
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import StockTicker from '@/components/ui/StockTicker';
 
-// Bu liste sadece ilk yükleme anında fallback olarak kalacak
+interface TickerItem {
+  symbol: string;
+  current_price: number;
+  change_pct: number;
+}
+
 const TICKER_NAMES: Record<string, string> = {
   "THYAO": "Türk Hava Yolları A.O.",
   "KCHOL": "Koç Holding A.Ş.",
@@ -59,21 +40,64 @@ const TICKER_NAMES: Record<string, string> = {
 };
 
 const CHART_INTERVALS = [
-  { value: '5m', label: '5Dk' },
-  { value: '15m', label: '15Dk' },
-  { value: '1h', label: '1S' },
-  { value: '4h', label: '4S' },
-  { value: '1d', label: '1G' },
+  { value: '5m', label: '5Dk' }, { value: '15m', label: '15Dk' },
+  { value: '1h', label: '1S' }, { value: '4h', label: '4S' }, { value: '1d', label: '1G' },
 ];
 
 const CHART_PERIODS = [
-  { value: '1mo', label: '1A' },
-  { value: '3mo', label: '3A' },
-  { value: '6mo', label: '6A' },
-  { value: '1y', label: '1Y' },
-  { value: '2y', label: '2Y' },
-  { value: '5y', label: '5Y' },
+  { value: '1mo', label: '1A' }, { value: '3mo', label: '3A' },
+  { value: '6mo', label: '6A' }, { value: '1y', label: '1Y' },
+  { value: '2y', label: '2Y' }, { value: '5y', label: '5Y' },
 ];
+
+interface TopPricedRowProps {
+  item: TickerItem;
+  rank: number;
+  name: string;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+const TopPricedRow = ({ item, rank, name, isSelected, onSelect }: TopPricedRowProps) => {
+  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
+  const prevPrice = useRef(item.current_price);
+
+  useEffect(() => {
+    if (item.current_price !== prevPrice.current) {
+      setFlash(item.current_price > prevPrice.current ? 'up' : 'down');
+      prevPrice.current = item.current_price;
+      const timer = setTimeout(() => setFlash(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [item.current_price]);
+
+  return (
+    <div
+      onClick={onSelect}
+      className={`flex items-center justify-between px-5 py-3 cursor-pointer transition-colors duration-150 ${
+        isSelected ? 'bg-slate-800/50 border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent hover:bg-slate-800/30'
+      }`}
+    >
+      <div className="flex items-center space-x-3 min-w-0">
+        <span className={`w-5 text-xs font-mono font-bold ${rank < 3 ? 'text-blue-400' : 'text-slate-500'}`}>#{rank + 1}</span>
+        <div className="flex flex-col">
+          <span className="text-xs font-mono font-bold text-slate-100">{item.symbol}</span>
+          <span className="text-[10px] text-slate-500 truncate max-w-[120px]">{name}</span>
+        </div>
+      </div>
+      
+      <div className={`flex items-center justify-end space-x-1 px-2.5 py-1 rounded font-mono text-xs font-bold border transition-all duration-500 min-w-[75px] ${
+          flash === 'up' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+            : flash === 'down' ? 'bg-rose-500/15 text-rose-400 border-rose-500/40 shadow-[0_0_8px_rgba(244,63,94,0.2)]'
+            : 'bg-blue-500/10 text-blue-300 border-blue-500/20'
+        }`}>
+        {flash === 'up' && <TrendingUp className="h-3 w-3" />}
+        {flash === 'down' && <TrendingDown className="h-3 w-3" />}
+        <span>₺{item.current_price.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+};
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -82,53 +106,111 @@ export default function DashboardPage() {
   
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const selectedSymbolRef = useRef<string | null>(null);
+
+  // Dedicated DOM reference to scroll directly to the chart container
+  const chartSectionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    selectedSymbolRef.current = selectedSymbol;
+  }, [selectedSymbol]);
   
-  // Tüm hisselerin dinamik isim haritası (Backend'den beslenecek)
   const [dynamicNames, setDynamicNames] = useState<Record<string, string>>(TICKER_NAMES);
 
-  // Layout States
-  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(true);
   const [isWatchlistOpen, setIsWatchlistOpen] = useState<boolean>(true);
   const [isFunnelOpen, setIsFunnelOpen] = useState<boolean>(false);
   const [isRuleDrawerOpen, setIsRuleDrawerOpen] = useState<boolean>(false);
-  
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
 
   const [chartConfig, setChartConfig] = useState<{ interval: string; period: string }>({
-    interval: '4h',
-    period: '6mo',
+    interval: '4h', period: '6mo',
   });
 
   const [marketData, setMarketData] = useState<MarketData | null>(null);
+  
+  // Independent chart data state to avoid resetting zoom level during background refreshes
+  const [chartData, setChartData] = useState<{
+    candles: any[];
+    indicators?: any[];
+    rsi_pane?: any;
+  } | null>(null);
   const [loadingMarket, setLoadingMarket] = useState<boolean>(false);
 
   const [overview, setOverview] = useState<MarketOverviewResponse | null>(null);
   const [loadingOverview, setLoadingOverview] = useState<boolean>(true);
   const [stockScores, setStockScores] = useState<Record<string, number>>({});
+  
+  const [liveTickerData, setLiveTickerData] = useState<TickerItem[]>([]);
 
-  useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      router.push('/auth');
-      return;
+  const prevScoreRef = useRef<number | null>(null);
+  const prevScoreSymbolRef = useRef<string | null>(null);
+  const [scoreFlash, setScoreFlash] = useState<'up' | 'down' | null>(null);
+
+  const prevPriceRef = useRef<number | null>(null);
+  const prevPriceSymbolRef = useRef<string | null>(null);
+  const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
+
+  const [bistTime, setBistTime] = useState<string>('--:--:--');
+
+  // Select stock and smoothly scroll to chart section across both desktop and mobile
+  const handleSelectStockWithScroll = (symbol: string) => {
+    setSelectedSymbol(symbol);
+    if (chartSectionRef.current) {
+      chartSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    setIsAuthenticated(true);
-    setIsAdmin(localStorage.getItem('is_admin') === 'true');
-    initializeDashboard();
-  }, [router]);
+  };
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      window.dispatchEvent(new Event('resize'));
-    }, 60);
-    return () => clearTimeout(timer);
-  }, [isLeftPanelOpen, isWatchlistOpen, isFunnelOpen]);
+  // Refreshes left menu RSI and ranking overview without modifying the selected stock
+  const refreshOverview = useCallback(async () => {
+    try {
+      const ov = await fetchMarketOverview();
+      setOverview(ov);
+      const scoresMap: Record<string, number> = {};
+      const namesMap: Record<string, string> = { ...TICKER_NAMES };
+      
+      ov.items.forEach((item) => {
+        scoresMap[item.symbol] = item.score;
+        namesMap[item.symbol] = item.name; 
+      });
+      
+      setStockScores(scoresMap);
+      setDynamicNames(namesMap);
+    } catch (err) {
+      console.warn('Overview refresh warning:', err);
+    }
+  }, []);
 
-  const initializeDashboard = async () => {
+  // Fetches market data for the target stock
+  const loadMarket = useCallback(async (symbol: string, interval: string, period: string, isBackground = false, signal?: AbortSignal) => {
+    if (!isBackground) setLoadingMarket(true);
+    try {
+      const data = await fetchMarketData(symbol, interval, period, signal);
+      setMarketData(data);
+
+      // Only refresh chart layout when explicitly requested or switched
+      if (!isBackground) {
+        setChartData({
+          candles: data.candles,
+          indicators: data.indicators || [],
+          rsi_pane: data.rsi_pane,
+        });
+      }
+      
+      if (data.score !== undefined) {
+        setStockScores((prev) => ({ ...prev, [symbol]: data.score! }));
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') console.warn('Market data fetch warning:', err?.message);
+    } finally {
+      if (!isBackground) setLoadingMarket(false);
+    }
+  }, []);
+
+  // Initial dashboard setup (runs only on initial page load)
+  const initializeDashboard = useCallback(async () => {
     try {
       const [watchlistData, overviewData] = await Promise.allSettled([
-        fetchWatchlist(),
-        fetchMarketOverview(),
+        fetchWatchlist(), fetchMarketOverview(),
       ]);
 
       let initialSymbol: string | null = null;
@@ -147,7 +229,7 @@ export default function DashboardPage() {
         
         ov.items.forEach((item) => {
           scoresMap[item.symbol] = item.score;
-          namesMap[item.symbol] = item.name; // Dinamik isimleri DB'den haritaya işliyoruz
+          namesMap[item.symbol] = item.name; 
         });
         
         setStockScores(scoresMap);
@@ -158,40 +240,135 @@ export default function DashboardPage() {
         }
       }
 
-      if (initialSymbol) setSelectedSymbol(initialSymbol);
+      // Assign initial stock only if no selection has been made yet
+      setSelectedSymbol((current) => current || initialSymbol);
     } catch (err) {
-      console.warn('Dashboard başlatılırken uyarı:', err);
+      console.warn('Dashboard init warning:', err);
     } finally {
       setLoadingOverview(false);
     }
-  };
+  }, []);
+
+  // Real-time synchronization with admin panel rules via BroadcastChannel
+  useEffect(() => {
+    try {
+      const bc = new BroadcastChannel('bist_tracker_sync');
+      bc.onmessage = (event) => {
+        if (event.data === 'RULES_UPDATED') {
+          setTimeout(() => {
+            refreshOverview();
+            if (selectedSymbolRef.current) {
+              setChartConfig((prev) => ({ ...prev }));
+            }
+          }, 500);
+        }
+      };
+      return () => bc.close();
+    } catch (e) {
+      console.warn("BroadcastChannel unsupported");
+    }
+  }, [refreshOverview]);
+
+  // Initial authentication verification and dashboard boot
+  useEffect(() => {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      router.push('/auth');
+      return;
+    }
+    setIsAuthenticated(true);
+    setIsAdmin(localStorage.getItem('is_admin') === 'true');
+    initializeDashboard();
+  }, [router, initializeDashboard]);
+
+  // Delay chart resize calculation on layout toggle
+  useEffect(() => {
+    const timer = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 60);
+    return () => clearTimeout(timer);
+  }, [isWatchlistOpen, isFunnelOpen]);
+
+  // Delayed BIST clock calculation and market hours freeze
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      const utcMs = now.getTime();
+      const istOffsetMs = 3 * 60 * 60 * 1000;
+      const delayMs = 15 * 60 * 1000;
+      
+      const delayedIst = new Date(utcMs + istOffsetMs - delayMs);
+      
+      const hours = delayedIst.getUTCHours();
+      const minutes = delayedIst.getUTCMinutes();
+      const seconds = delayedIst.getUTCSeconds();
+      const day = delayedIst.getUTCDay(); 
+      
+      let displayHours = hours;
+      let displayMinutes = minutes;
+      let displaySeconds = seconds;
+
+      const timeInSeconds = hours * 3600 + minutes * 60 + seconds;
+      const openTime = 10 * 3600; 
+      const closeTime = 18 * 3600 + 10 * 60; 
+
+      if (day === 0 || day === 6 || timeInSeconds < openTime || timeInSeconds >= closeTime) {
+        displayHours = 18; displayMinutes = 10; displaySeconds = 0;
+      }
+      
+      const hh = String(displayHours).padStart(2, '0');
+      const mm = String(displayMinutes).padStart(2, '0');
+      const ss = String(displaySeconds).padStart(2, '0');
+      setBistTime(`${hh}:${mm}:${ss}`);
+    };
+
+    updateClock();
+    const timer = setInterval(updateClock, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Triggered when stock or interval period is changed by user
+  useEffect(() => {
+    if (!selectedSymbol || !isAuthenticated) return;
+    const controller = new AbortController();
+    loadMarket(selectedSymbol, chartConfig.interval, chartConfig.period, false, controller.signal);
+    return () => controller.abort();
+  }, [selectedSymbol, chartConfig, isAuthenticated, loadMarket]);
+
+  // Unified Heartbeat: Consolidates all background requests into a single synchronized 15s cycle
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const runHeartbeat = async () => {
+      const currentSym = selectedSymbolRef.current;
+      await Promise.allSettled([
+        // 1. Ticker data (Single query shared between top ticker and Top 10 priced list)
+        fetch('http://127.0.0.1:8000/api/v1/market/ticker', { cache: 'no-store' })
+          .then((res) => (res.ok ? res.json() : []))
+          .then((data) => setLiveTickerData(data)),
+
+        // 2. Left menu RSI lists and scores
+        refreshOverview(),
+
+        // 3. Current stock market data update in background mode (preserves chart zoom state)
+        currentSym ? loadMarket(currentSym, chartConfig.interval, chartConfig.period, true) : Promise.resolve(),
+      ]);
+    };
+
+    const heartbeatTimer = setInterval(runHeartbeat, 15000);
+    return () => clearInterval(heartbeatTimer);
+  }, [isAuthenticated, chartConfig, loadMarket, refreshOverview]);
 
   const handleToggleWatchlist = async (symbol: string, isAdded: boolean) => {
     try {
       if (isAdded) {
         await removeFromWatchlist(symbol);
-        const updatedList = watchlist.filter((s) => s !== symbol);
-        setWatchlist(updatedList);
-
-        if (selectedSymbol === symbol) {
-          if (updatedList.length > 0) {
-            setSelectedSymbol(updatedList[0]);
-          } else if (overview?.top_scored?.length) {
-            setSelectedSymbol(overview.top_scored[0].symbol);
-          } else {
-            setSelectedSymbol(null);
-            setMarketData(null);
-          }
-        }
+        setWatchlist((prev) => prev.filter((s) => s !== symbol));
       } else {
         await addToWatchlist(symbol);
         setWatchlist((prev) => [...prev, symbol]);
-        setSelectedSymbol(symbol);
+        handleSelectStockWithScroll(symbol);
         setIsMobileSearchOpen(false);
       }
-    } catch (err: any) {
-      alert(err.message);
-    }
+    } catch (err: any) { alert(err.message); }
   };
 
   const handleIntervalChange = (newInterval: string) => {
@@ -212,44 +389,65 @@ export default function DashboardPage() {
     });
   };
 
+  const currentScore = marketData?.score ?? (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
+
+  // Score flash animation
   useEffect(() => {
-    if (!selectedSymbol || !isAuthenticated) return;
+    if (!selectedSymbol) return;
 
-    const controller = new AbortController();
+    if (prevScoreSymbolRef.current !== selectedSymbol) {
+      prevScoreSymbolRef.current = selectedSymbol;
+      prevScoreRef.current = currentScore;
+      setScoreFlash(null);
+      return;
+    }
 
-    const loadMarket = async () => {
-      setLoadingMarket(true);
-      try {
-        const data = await fetchMarketData(selectedSymbol, chartConfig.interval, chartConfig.period, controller.signal);
-        setMarketData(data);
-        if (data.score !== undefined) setStockScores((prev) => ({ ...prev, [selectedSymbol]: data.score! }));
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') console.warn('Piyasa verisi çekilirken uyarı:', err?.message);
-      } finally {
-        if (!controller.signal.aborted) setLoadingMarket(false);
-      }
-    };
+    if (prevScoreRef.current !== null && currentScore !== prevScoreRef.current) {
+      setScoreFlash(currentScore > prevScoreRef.current ? 'up' : 'down');
+      const timer = setTimeout(() => setScoreFlash(null), 1000);
+      prevScoreRef.current = currentScore;
+      return () => clearTimeout(timer);
+    }
+    prevScoreRef.current = currentScore;
+  }, [selectedSymbol, currentScore]);
 
-    loadMarket();
-    return () => controller.abort();
-  }, [selectedSymbol, chartConfig, isAuthenticated]);
+  // Price flash animation
+  useEffect(() => {
+    if (!marketData || marketData.current_price === undefined) return;
+
+    const currentSymbol = marketData.symbol;
+    const currentPrice = marketData.current_price;
+
+    if (prevPriceSymbolRef.current !== currentSymbol) {
+      prevPriceSymbolRef.current = currentSymbol;
+      prevPriceRef.current = currentPrice;
+      setPriceFlash(null);
+      return;
+    }
+
+    if (prevPriceRef.current !== null && currentPrice !== prevPriceRef.current) {
+      setPriceFlash(currentPrice > prevPriceRef.current ? 'up' : 'down');
+      const timer = setTimeout(() => setPriceFlash(null), 1000);
+      prevPriceRef.current = currentPrice;
+      return () => clearTimeout(timer);
+    }
+    prevPriceRef.current = currentPrice;
+  }, [marketData?.symbol, marketData?.current_price]);
 
   if (!isAuthenticated) return <div className="min-h-screen bg-[#0b0e14]" />;
 
-  const currentScore = marketData?.score ?? (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
   const rulesList = marketData?.rules_breakdown || [];
-  const passedRulesCount = rulesList.filter((r) => r.is_met).length;
-
   const rsiPassedList: StockOverviewItem[] = overview?.rsi_passed || [];
   const topScoredList: StockOverviewItem[] = overview?.top_scored || [];
-  const topPricedList: StockOverviewItem[] = overview?.top_priced || [];
+  
+  const dynamicTopPriced = [...liveTickerData]
+    .sort((a, b) => b.current_price - a.current_price)
+    .slice(0, 10);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0e14] text-slate-200 overflow-x-hidden">
-      {/* Top Navigation */}
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#0b0e14]/95 backdrop-blur-md px-4 sm:px-6 min-h-[68px] flex items-center">
         {isMobileSearchOpen ? (
-          /* Sadece Arama Çubuğu (Mobil Açık Durum) */
           <div className="flex items-center w-full gap-3 animate-in fade-in duration-200">
              <div className="flex-1 w-full">
                <StockSearch userWatchlist={watchlist} onToggleWatchlist={handleToggleWatchlist} />
@@ -262,7 +460,6 @@ export default function DashboardPage() {
              </button>
           </div>
         ) : (
-          /* Normal Header (Arama Kapalı) */
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center space-x-4 sm:space-x-6">
               <div className="flex items-center space-x-3 cursor-pointer group" onClick={() => router.push('/')}>
@@ -298,7 +495,7 @@ export default function DashboardPage() {
                       <User className="mr-2 h-4 w-4 text-slate-400" /><span>Profil</span>
                     </DropdownMenuItem>
                     {isAdmin && (
-                      <DropdownMenuItem onClick={() => router.push('/admin')} className="cursor-pointer py-2 px-2.5 rounded-md hover:bg-slate-800/80 text-emerald-400">
+                      <DropdownMenuItem onClick={() => { window.location.href = '/admin'; }} className="cursor-pointer py-2 px-2.5 rounded-md hover:bg-slate-800/80 text-emerald-400">
                         <ShieldCheck className="mr-2 h-4 w-4 text-emerald-500" /><span>Admin Paneli</span>
                       </DropdownMenuItem>
                     )}
@@ -313,129 +510,120 @@ export default function DashboardPage() {
         )}
       </header>
 
-      <StockTicker />
+      {/* Sliding Ticker Band */}
+      <StockTicker items={liveTickerData} />
 
-      {/* Main Workspace */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6">
         <div className="flex flex-col lg:flex-row gap-6 items-start">
           
-          {/* 1. LEFT SIDEBAR: Accordions (Desktop & Mobile) */}
-          <aside className={`transition-all duration-300 shrink-0 space-y-4 ${isLeftPanelOpen ? 'w-full lg:w-72' : 'w-full lg:w-16'}`}>
-            {isLeftPanelOpen ? (
-              <>
-                <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
-                  <div 
-                    onClick={() => setIsWatchlistOpen(!isWatchlistOpen)}
-                    className="px-4 py-3.5 border-b border-slate-800/80 flex items-center justify-between cursor-pointer hover:bg-slate-800/50 transition-colors group select-none"
-                  >
-                    <h2 className="text-[11px] font-semibold tracking-wider text-slate-300 uppercase">Takip Listesi</h2>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-[10px] font-mono text-slate-400 bg-slate-800/60 px-1.5 py-0.5 rounded-md">{watchlist.length}</span>
-                      <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform duration-300 ${!isWatchlistOpen ? '-rotate-90' : ''}`} />
-                    </div>
-                  </div>
-
-                  {isWatchlistOpen && (
-                    <div className="divide-y divide-slate-800/60 max-h-[250px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
-                      {watchlist.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-slate-500">Listeniz boş. Arama çubuğundan hisse ekleyin.</div>
-                      ) : (
-                        watchlist.map((symbol) => {
-                          const isSelected = selectedSymbol === symbol;
-                          const symScore = stockScores[symbol];
-                          return (
-                            <div key={symbol} onClick={() => setSelectedSymbol(symbol)} className={`group flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-slate-800/50 border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent hover:bg-slate-800/25'}`}>
-                              <div className="flex items-center space-x-3 min-w-0">
-                                <span className="relative flex h-2 w-2 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span></span>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-xs font-mono font-bold text-slate-100">{symbol}</span>
-                                  {/* DINAMIK İSİM BURADA ÇEKİLİYOR */}
-                                  <span className="text-[10px] text-slate-500 truncate max-w-[110px]">{dynamicNames[symbol] || symbol}</span>
-                                </div>
-                              </div>
-                              {/* YENİ SÜRGÜLÜ SİLME BUTONU (İÇ İÇE GEÇMEYİ ENGELLER) */}
-                              <div className="relative flex items-center justify-end w-12 h-6 overflow-hidden">
-                                <div className="absolute right-0 flex items-center transition-transform duration-200 group-hover:translate-x-12">
-                                  <span className="text-xs font-bold font-mono text-emerald-400">{symScore !== undefined ? symScore.toFixed(2) : '--'}</span>
-                                </div>
-                                <button 
-                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleWatchlist(symbol, true); }} 
-                                  className="absolute right-0 p-1.5 rounded bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 translate-x-12 group-hover:translate-x-0 transition-transform duration-200"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
+          <aside className="w-full lg:w-72 shrink-0 space-y-4">
+            <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
+              <div 
+                onClick={() => setIsWatchlistOpen(!isWatchlistOpen)}
+                className="px-4 py-3.5 border-b border-slate-800/80 flex items-center justify-between cursor-pointer hover:bg-slate-800/50 transition-colors group select-none"
+              >
+                <h2 className="text-[11px] font-semibold tracking-wider text-slate-300 uppercase">Takip Listesi</h2>
+                <div className="flex items-center space-x-2">
+                  <span className="text-[10px] font-mono text-slate-400 bg-slate-800/60 px-1.5 py-0.5 rounded-md">{watchlist.length}</span>
+                  <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform duration-300 ${!isWatchlistOpen ? '-rotate-90' : ''}`} />
                 </div>
-
-                <div className="rounded-xl border border-amber-500/20 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
-                  <div 
-                    onClick={() => setIsFunnelOpen(!isFunnelOpen)}
-                    className="px-4 py-3.5 border-b border-amber-500/20 bg-amber-500/5 flex items-center justify-between cursor-pointer hover:bg-amber-500/10 transition-colors group select-none"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <Flame className={`h-4 w-4 transition-colors ${isFunnelOpen ? 'text-amber-400' : 'text-amber-500/60 group-hover:text-amber-400'}`} />
-                      <h2 className={`text-[11px] font-semibold tracking-wider uppercase transition-colors ${isFunnelOpen ? 'text-amber-400' : 'text-amber-500/60 group-hover:text-amber-400'}`}>RSI Filtresi</h2>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                       <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded-md">{rsiPassedList.length}</span>
-                       <ChevronDown className={`h-4 w-4 text-amber-500/60 transition-transform duration-300 group-hover:text-amber-400 ${!isFunnelOpen ? '-rotate-90' : ''}`} />
-                    </div>
-                  </div>
-
-                  {isFunnelOpen && (
-                    <div className="divide-y divide-slate-800/60 max-h-[250px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
-                      {loadingOverview ? (
-                        <div className="p-6 flex items-center justify-center space-x-2 text-xs text-slate-500 font-mono">
-                          <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" /><span>Taranıyor...</span>
-                        </div>
-                      ) : rsiPassedList.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-slate-500">Şu an filtresini geçen hisse yok.</div>
-                      ) : (
-                        rsiPassedList.map((item) => (
-                          <div key={item.symbol} onClick={() => setSelectedSymbol(item.symbol)} className={`flex items-center justify-between px-4 py-3 cursor-pointer ${selectedSymbol === item.symbol ? 'bg-amber-500/10 border-l-2 border-l-amber-400' : 'border-l-2 border-l-transparent hover:bg-slate-800/30'}`}>
-                            <div className="flex items-center space-x-3 min-w-0">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_#f59e0b] shrink-0" />
-                              <span className="text-xs font-mono font-bold text-slate-100">{item.symbol}</span>
-                            </div>
-                            <div className="text-xs font-bold font-mono text-emerald-400">{item.score.toFixed(2)}</div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="hidden lg:flex flex-col gap-2 max-h-[600px] overflow-auto scrollbar-hide p-1 mt-2">
-                 {watchlist.map((symbol) => {
-                    const isSelected = selectedSymbol === symbol;
-                    const score = stockScores[symbol] !== undefined ? Math.round(stockScores[symbol]) : 0;
-                    return (
-                      <button 
-                        key={symbol} 
-                        onClick={() => setSelectedSymbol(symbol)} 
-                        title={symbol}
-                        className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-all ${isSelected ? 'bg-blue-600/15 border-blue-500/40 shadow-sm' : 'bg-[#12161f]/80 border-slate-800 hover:bg-slate-800'}`}
-                      >
-                        <span className={`text-[10px] font-mono font-bold ${isSelected ? 'text-blue-400' : 'text-slate-300'}`}>{symbol}</span>
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 mt-0.5">{score}</span>
-                      </button>
-                    );
-                  })}
               </div>
-            )}
+
+              {isWatchlistOpen && (
+                <div className="divide-y divide-slate-800/60 max-h-[250px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
+                  {watchlist.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-500">Listeniz boş. Arama çubuğundan hisse ekleyin.</div>
+                  ) : (
+                    watchlist.map((symbol) => {
+                      const isSelected = selectedSymbol === symbol;
+                      const symScore = stockScores[symbol];
+                      return (
+                        <div 
+                          key={symbol} 
+                          onClick={() => handleSelectStockWithScroll(symbol)} 
+                          className={`group flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-slate-800/50 border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent hover:bg-slate-800/25'}`}
+                        >
+                          <div className="flex items-center space-x-3 min-w-0">
+                            <span className="relative flex h-2 w-2 shrink-0">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                            </span>
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-xs font-mono font-bold text-slate-100">{symbol}</span>
+                              <span className="text-[10px] text-slate-500 truncate max-w-[110px]">{dynamicNames[symbol] || symbol}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2 shrink-0">
+                            <span className="text-xs font-bold font-mono text-emerald-400">
+                              {symScore !== undefined ? symScore.toFixed(2) : '--'}
+                            </span>
+                            <button 
+                              onClick={(e) => { 
+                                e.preventDefault(); 
+                                e.stopPropagation(); 
+                                handleToggleWatchlist(symbol, true); 
+                              }} 
+                              title="Takip Listesinden Çıkar"
+                              className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-amber-500/20 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
+              <div 
+                onClick={() => setIsFunnelOpen(!isFunnelOpen)}
+                className="px-4 py-3.5 border-b border-amber-500/20 bg-amber-500/5 flex items-center justify-between cursor-pointer hover:bg-amber-500/10 transition-colors group select-none"
+              >
+                <div className="flex items-center space-x-2">
+                  <Flame className={`h-4 w-4 transition-colors ${isFunnelOpen ? 'text-amber-400' : 'text-amber-500/60 group-hover:text-amber-400'}`} />
+                  <h2 className={`text-[11px] font-semibold tracking-wider uppercase transition-colors ${isFunnelOpen ? 'text-amber-400' : 'text-amber-500/60 group-hover:text-amber-400'}`}>RSI Filtresi</h2>
+                </div>
+                <div className="flex items-center space-x-2">
+                   <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded-md">{rsiPassedList.length}</span>
+                   <ChevronDown className={`h-4 w-4 text-amber-500/60 transition-transform duration-300 group-hover:text-amber-400 ${!isFunnelOpen ? '-rotate-90' : ''}`} />
+                </div>
+              </div>
+
+              {isFunnelOpen && (
+                <div className="divide-y divide-slate-800/60 max-h-[250px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
+                  {loadingOverview ? (
+                    <div className="p-6 flex items-center justify-center space-x-2 text-xs text-slate-500 font-mono">
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" /><span>Taranıyor...</span>
+                    </div>
+                  ) : rsiPassedList.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-500">Şu an filtresini geçen hisse yok.</div>
+                  ) : (
+                    rsiPassedList.map((item) => (
+                      <div 
+                        key={item.symbol} 
+                        onClick={() => handleSelectStockWithScroll(item.symbol)} 
+                        className={`flex items-center justify-between px-4 py-3 cursor-pointer ${selectedSymbol === item.symbol ? 'bg-amber-500/10 border-l-2 border-l-amber-400' : 'border-l-2 border-l-transparent hover:bg-slate-800/30'}`}
+                      >
+                        <div className="flex items-center space-x-3 min-w-0">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_#f59e0b] shrink-0" />
+                          <span className="text-xs font-mono font-bold text-slate-100">{item.symbol}</span>
+                        </div>
+                        <div className="text-xs font-bold font-mono text-emerald-400">{item.score.toFixed(2)}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </aside>
 
-          {/* 2. RIGHT MAIN WORKSPACE */}
           <div className="flex-1 min-w-0 w-full space-y-6">
             
-            <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-4 sm:p-5 shadow-2xl backdrop-blur-md flex flex-col">
+            {/* Chart Container Card */}
+            <div ref={chartSectionRef} className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-4 sm:p-5 shadow-2xl backdrop-blur-md flex flex-col">
               {!selectedSymbol ? (
                 <div className="h-[450px] flex flex-col items-center justify-center text-slate-500">
                   <Activity className="h-12 w-12 mb-4 opacity-20" />
@@ -443,23 +631,42 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <>
-                  {/* ÇİZİMİNE BİREBİR UYGUN ÜST YERLEŞİM (Responsive Desktop & Mobile) */}
                   <div className="flex flex-col md:flex-row justify-between gap-6 mb-6">
                     
-                    {/* SOL TARAF: İsim, Rozetler ve Periyotlar (Alt Alta) */}
                     <div className="flex flex-col space-y-4 w-full md:w-auto">
-                      {/* Hisse İsmi ve Rozetler */}
                       <div className="flex flex-col space-y-2">
-                        <div className="flex items-baseline space-x-3">
-                          <h3 className="font-mono text-4xl sm:text-5xl font-bold text-white tracking-tight leading-none uppercase">
-                            {selectedSymbol}
-                          </h3>
+                        <div className="flex items-center space-x-3">
+                          <a
+                            href={`/detay/${selectedSymbol}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`${selectedSymbol} detay sayfasını yeni sekmede aç`}
+                            className="font-mono text-4xl sm:text-5xl font-bold text-white tracking-tight leading-none uppercase hover:text-blue-400 transition-colors inline-flex items-center group/title cursor-pointer"
+                          >
+                            <span>{selectedSymbol}</span>
+                            <ExternalLink className="h-5 w-5 sm:h-6 sm:w-6 ml-2.5 opacity-40 group-hover/title:opacity-100 group-hover/title:text-blue-400 transition-all" />
+                          </a>
+
+                          <button
+                            onClick={() => handleToggleWatchlist(selectedSymbol!, watchlist.includes(selectedSymbol!))}
+                            title={watchlist.includes(selectedSymbol!) ? "Takip Listesinden Çıkar" : "Takip Listesine Ekle"}
+                            className={`h-7 w-7 sm:h-8 sm:w-8 mt-1 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer shadow-sm ${
+                              watchlist.includes(selectedSymbol!)
+                                ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/40 hover:scale-105'
+                                : 'bg-slate-800 text-slate-400 hover:bg-blue-600 hover:text-white hover:scale-105'
+                            }`}
+                          >
+                            {watchlist.includes(selectedSymbol!) ? (
+                              <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
+                            ) : (
+                              <Plus className="h-4 w-4 sm:h-5 sm:w-5" />
+                            )}
+                          </button>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                            <span className="text-[10px] font-mono uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2 py-1 rounded">
                             {chartConfig.interval} / {chartConfig.period}
                            </span>
-                           {/* Şirket ismi artık her ekranda şık gri bir rozet olarak kalacak */}
                            <span className="text-[10px] font-mono text-slate-500 border border-slate-700 bg-slate-800/50 px-2 py-1 rounded">
                              {dynamicNames[selectedSymbol!] || selectedSymbol}
                            </span>
@@ -472,7 +679,6 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
-                      {/* Zaman ve Menzil Kontrolleri (Alt Alta, Eşit Genişlikte, Renkli ve İkonlu) */}
                       <div className="flex flex-col gap-3">
                         <div className="flex items-center space-x-2">
                           <Clock className="h-4 w-4 text-slate-400 shrink-0" />
@@ -493,27 +699,30 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    {/* SAĞ TARAF: Çerçeveli Fiyat ve Skor Kutusu (Kısaltıldı ve Yukarı Hizalandı) */}
                     <div className="flex flex-col justify-center bg-[#161b26]/50 border border-slate-800/80 rounded-2xl p-4 sm:p-5 w-full md:w-auto xl:min-w-[340px] md:self-start">
                       {marketData && !loadingMarket ? (
                         <div className="flex flex-col space-y-4">
-                          {/* Fiyat ve Değişim (Üstte) */}
-                          <div className="flex items-center justify-between">
-                            <div className="font-mono text-3xl sm:text-4xl font-bold text-slate-100 leading-none">
+                          
+                          <div className={`flex items-start justify-between p-2 -mx-2 rounded-lg transition-colors duration-500 ${priceFlash === 'up' ? 'bg-emerald-500/20' : priceFlash === 'down' ? 'bg-rose-500/20' : 'bg-transparent'}`}>
+                            <div className={`font-mono text-3xl sm:text-4xl font-bold leading-none transition-colors duration-300 ${priceFlash === 'up' ? 'text-emerald-400' : priceFlash === 'down' ? 'text-rose-400' : 'text-slate-100'}`}>
                               ₺{marketData.current_price.toFixed(2)}
                             </div>
-                            <div className={`flex items-center space-x-1 font-mono text-sm font-semibold ${marketData.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {marketData.change_pct >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                              <span>{marketData.change_pct >= 0 ? '+' : ''}{marketData.change_pct}%</span>
+                            <div className="flex flex-col items-end">
+                              <div className={`flex items-center space-x-1 font-mono text-sm font-semibold ${marketData.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {marketData.change_pct >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                                <span>{marketData.change_pct >= 0 ? '+' : ''}{marketData.change_pct}%</span>
+                              </div>
+                              <span className="text-[10px] text-slate-500 mt-1 uppercase font-mono">
+                                {bistTime}
+                              </span>
                             </div>
                           </div>
                           
                           <div className="border-t border-slate-800/80 w-full"></div>
 
-                          {/* Skor ve Karne Butonu (Altta) */}
                           <div className="flex items-center justify-between">
-                            <div className="flex flex-col">
-                              <span className="text-2xl sm:text-3xl font-mono font-bold text-emerald-400 leading-none">
+                            <div className={`flex flex-col p-2 -mx-2 rounded-lg transition-colors duration-500 ${scoreFlash === 'up' ? 'bg-emerald-500/20' : scoreFlash === 'down' ? 'bg-rose-500/20' : 'bg-transparent'}`}>
+                              <span className={`text-2xl sm:text-3xl font-mono font-bold leading-none transition-colors duration-300 ${scoreFlash === 'up' ? 'text-emerald-400' : scoreFlash === 'down' ? 'text-rose-400' : 'text-emerald-400'}`}>
                                 {currentScore.toFixed(2)}
                               </span>
                               <span className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">SKOR</span>
@@ -537,10 +746,15 @@ export default function DashboardPage() {
 
                   </div>
 
-                  {/* GRAFİK ALANI */}
                   <div className="w-full relative flex-1 min-h-[350px]">
-                    {marketData?.candles && !loadingMarket ? (
-                      <ChartWrapper candles={marketData.candles} indicators={marketData.indicators} rsiPane={marketData.rsi_pane} height={420} />
+                    {chartData?.candles && !loadingMarket ? (
+                      <ChartWrapper 
+                        key={`${selectedSymbol}-${chartConfig.interval}-${chartConfig.period}`}
+                        candles={chartData.candles} 
+                        indicators={chartData.indicators} 
+                        rsiPane={chartData.rsi_pane} 
+                        height={420} 
+                      />
                     ) : (
                       <div className="h-[420px] flex items-center justify-center text-slate-600 text-sm">Grafik yükleniyor...</div>
                     )}
@@ -554,7 +768,7 @@ export default function DashboardPage() {
                 <div className="px-5 py-3.5 border-b border-slate-800/80 flex items-center justify-between bg-emerald-500/5">
                   <div className="flex items-center space-x-2">
                     <Trophy className="h-4 w-4 text-emerald-400" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-emerald-400">En Yüksek Skorlu 10</h3>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-emerald-400">En Yüksek Skorlu 10 Hisse</h3>
                   </div>
                   <span className="text-[10px] text-slate-500 hidden sm:inline">Algoritmik Sıralama</span>
                 </div>
@@ -562,7 +776,11 @@ export default function DashboardPage() {
                   {loadingOverview ? (
                     <div className="p-8 text-center text-xs text-slate-500 font-mono">Hesaplanıyor...</div>
                   ) : topScoredList.map((item, idx) => (
-                    <div key={item.symbol} onClick={() => setSelectedSymbol(item.symbol)} className="flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors">
+                    <div 
+                      key={item.symbol} 
+                      onClick={() => handleSelectStockWithScroll(item.symbol)} 
+                      className="flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+                    >
                       <div className="flex items-center space-x-3 min-w-0">
                         <span className={`w-5 text-xs font-mono font-bold ${idx < 3 ? 'text-emerald-400' : 'text-slate-500'}`}>#{idx + 1}</span>
                         <div className="flex flex-col">
@@ -590,19 +808,17 @@ export default function DashboardPage() {
                   <span className="text-[10px] text-slate-500 hidden sm:inline">Birim Fiyat</span>
                 </div>
                 <div className="divide-y divide-slate-800/60 max-h-[340px] overflow-y-auto scrollbar-hide">
-                  {loadingOverview ? (
+                  {dynamicTopPriced.length === 0 ? (
                     <div className="p-8 text-center text-xs text-slate-500 font-mono">Yükleniyor...</div>
-                  ) : topPricedList.map((item, idx) => (
-                    <div key={item.symbol} onClick={() => setSelectedSymbol(item.symbol)} className="flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors">
-                      <div className="flex items-center space-x-3 min-w-0">
-                        <span className={`w-5 text-xs font-mono font-bold ${idx < 3 ? 'text-blue-400' : 'text-slate-500'}`}>#{idx + 1}</span>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-mono font-bold text-slate-100">{item.symbol}</span>
-                          <span className="text-[10px] text-slate-500 truncate max-w-[120px]">{item.name}</span>
-                        </div>
-                      </div>
-                      <div className="px-2.5 py-1 rounded bg-blue-500/10 text-blue-300 font-mono text-xs font-bold border border-blue-500/20 text-right min-w-[70px]">₺{item.current_price.toFixed(2)}</div>
-                    </div>
+                  ) : dynamicTopPriced.map((item, idx) => (
+                    <TopPricedRow
+                      key={item.symbol}
+                      item={item}
+                      rank={idx}
+                      name={dynamicNames[item.symbol] || item.symbol}
+                      isSelected={selectedSymbol === item.symbol}
+                      onSelect={() => handleSelectStockWithScroll(item.symbol)}
+                    />
                   ))}
                 </div>
               </div>
@@ -611,7 +827,6 @@ export default function DashboardPage() {
         </div>
       </main>
 
-      {/* YENİLENMİŞ KURAL ÇEKMECESİ (DRAWER) - DEĞERLER EKLENDİ */}
       {isRuleDrawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="fixed inset-0" onClick={() => setIsRuleDrawerOpen(false)} />
@@ -637,7 +852,6 @@ export default function DashboardPage() {
                         <span className="font-semibold truncate">{rule.name}</span>
                         <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
                           <span className="bg-slate-800/80 px-1.5 py-0.5 rounded">{rule.timeframe?.toUpperCase()}</span>
-                          {/* SAYISAL DEĞERLER BURAYA EKLENDİ */}
                           {rule.current_value !== undefined && (
                             <span className="flex items-center space-x-1">
                               <span>Anlık: <strong className="text-slate-300">{Number(rule.current_value).toFixed(2)}</strong></span>

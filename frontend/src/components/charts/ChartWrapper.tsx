@@ -26,30 +26,40 @@ export default function ChartWrapper({
   rsiPane,
   height = 320,
 }: ChartWrapperProps) {
-  const mainChartRef = useRef<HTMLDivElement>(null);
-  const rsiChartRef = useRef<HTMLDivElement>(null);
+  const mainChartContainerRef = useRef<HTMLDivElement>(null);
+  const rsiChartContainerRef = useRef<HTMLDivElement>(null);
+
+  // References to chart instances and series, to avoid re-creating them on every render
+  const chartRefs = useRef<{
+    mainChart: any;
+    candleSeries: any;
+    indicatorSeries: Record<string, any>;
+    rsiChart: any;
+    rsiSeries: any;
+    trendSeries: any;
+  } | null>(null);
 
   const [visibleNames, setVisibleNames] = useState<Record<string, boolean>>({});
   const [showAllOverlays, setShowAllOverlays] = useState<boolean>(false);
 
+  // Set the indicator views on the start
   useEffect(() => {
     if (!indicators || indicators.length === 0) return;
     setVisibleNames((prev) => {
       const next = { ...prev };
+      let changed = false;
       indicators.forEach((ind, idx) => {
         if (next[ind.name] === undefined) {
           next[ind.name] = idx < 2;
+          changed = true;
         }
       });
-      return next;
+      return changed ? next : prev;
     });
   }, [indicators]);
 
   const toggleSingleIndicator = (name: string) => {
-    setVisibleNames((prev) => ({
-      ...prev,
-      [name]: !prev[name],
-    }));
+    setVisibleNames((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
   const handleToggleAll = () => {
@@ -62,250 +72,141 @@ export default function ChartWrapper({
     setVisibleNames(updated);
   };
 
+  // Graphical construction and data updates are handled in a single useEffect to avoid unnecessary re-renders and to maintain chart state (like zoom level) across data updates.
   useEffect(() => {
-    if (!mainChartRef.current) return;
+    if (!mainChartContainerRef.current) return;
 
-    const initialWidth = mainChartRef.current.clientWidth || 600;
+    const initialWidth = mainChartContainerRef.current.clientWidth || 600;
 
-    // 1. MAIN PRICE & OVERLAY CHART
-    const mainChart = createChart(mainChartRef.current, {
-      width: initialWidth,
-      height,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#94a3b8',
-      },
-      grid: {
-        vertLines: { color: 'rgba(30, 41, 59, 0.4)' },
-        horzLines: { color: 'rgba(30, 41, 59, 0.4)' },
-      },
-      crosshair: {
-        vertLine: { color: '#64748b', width: 1, style: 3 },
-        horzLine: { color: '#64748b', width: 1, style: 3 },
-      },
-      timeScale: {
-        borderColor: 'rgba(30, 41, 59, 0.8)',
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(30, 41, 59, 0.8)',
-      },
-    });
+    // 1st stage: If the chart does not exist, create it only once (initialize)
+    if (!chartRefs.current) {
+      const mainChart = createChart(mainChartContainerRef.current, {
+        width: initialWidth,
+        height,
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
+        grid: { vertLines: { color: 'rgba(30, 41, 59, 0.4)' }, horzLines: { color: 'rgba(30, 41, 59, 0.4)' } },
+        crosshair: { vertLine: { color: '#64748b', width: 1, style: 3 }, horzLine: { color: '#64748b', width: 1, style: 3 } },
+        timeScale: { borderColor: 'rgba(30, 41, 59, 0.8)', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: 'rgba(30, 41, 59, 0.8)' },
+      });
 
-    const candleSeries =
-      typeof (mainChart as any).addCandlestickSeries === 'function'
-        ? (mainChart as any).addCandlestickSeries({
-            upColor: '#10b981',
-            downColor: '#ef4444',
-            borderVisible: false,
-            wickUpColor: '#10b981',
-            wickDownColor: '#ef4444',
-          })
-        : mainChart.addSeries(CandlestickSeries, {
-            upColor: '#10b981',
-            downColor: '#ef4444',
-            borderVisible: false,
-            wickUpColor: '#10b981',
-            wickDownColor: '#ef4444',
-          });
+      const candleSeries = mainChart.addSeries(CandlestickSeries, {
+        upColor: '#10b981', downColor: '#ef4444', borderVisible: false, wickUpColor: '#10b981', wickDownColor: '#ef4444',
+      });
+
+      let rsiChart: any = null;
+      let rsiSeries: any = null;
+      let trendSeries: any = null;
+
+      if (rsiChartContainerRef.current && rsiPane) {
+        rsiChart = createChart(rsiChartContainerRef.current, {
+          width: rsiChartContainerRef.current.clientWidth || initialWidth,
+          height: 165,
+          layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
+          grid: { vertLines: { color: 'rgba(30, 41, 59, 0.35)' }, horzLines: { color: 'rgba(30, 41, 59, 0.35)' } },
+          crosshair: { vertLine: { color: '#64748b', width: 1, style: 3 }, horzLine: { color: '#64748b', width: 1, style: 3 } },
+          timeScale: { borderColor: 'rgba(30, 41, 59, 0.8)', timeVisible: true, secondsVisible: false },
+          rightPriceScale: { borderColor: 'rgba(30, 41, 59, 0.8)' },
+        });
+
+        rsiSeries = rsiChart.addSeries(LineSeries, { color: '#a855f7', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+        
+        [ { price: 70, color: 'rgba(148, 163, 184, 0.45)' }, { price: 50, color: 'rgba(148, 163, 184, 0.30)' }, { price: 30, color: 'rgba(148, 163, 184, 0.45)' } ].forEach((lvl) => {
+          rsiSeries.createPriceLine({ price: lvl.price, color: lvl.color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
+        });
+
+        trendSeries = rsiChart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+
+        // RSI and Main Graph Synchronization
+        mainChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
+          if (range && rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
+        });
+        rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
+          if (range && mainChart) mainChart.timeScale().setVisibleLogicalRange(range);
+        });
+      }
+
+      chartRefs.current = { mainChart, candleSeries, indicatorSeries: {}, rsiChart, rsiSeries, trendSeries };
+    }
+
+    // 2nd stage: Update the existing chart with new data (do not destroy the chart to preserve zoom and pan state)
+    const refs = chartRefs.current;
 
     if (candles && candles.length > 0) {
       const mappedCandles = candles.map((c) => ({
         time: Math.floor(new Date(c.time).getTime() / 1000) as any,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
+        open: c.open, high: c.high, low: c.low, close: c.close,
       }));
-
-      const uniqueCandles = Array.from(
-        new Map(mappedCandles.map((item) => [item.time, item])).values()
-      ).sort((a, b) => a.time - b.time);
-
-      candleSeries.setData(uniqueCandles);
+      const uniqueCandles = Array.from(new Map(mappedCandles.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
+      
+      // Inject only the data, do not reset zoom
+      refs.candleSeries.setData(uniqueCandles);
     }
 
-    if (indicators && indicators.length > 0) {
+    if (indicators) {
       indicators.forEach((ind) => {
-        if (!visibleNames[ind.name]) return;
-
-        const lineSeries =
-          typeof (mainChart as any).addLineSeries === 'function'
-            ? (mainChart as any).addLineSeries({
-                color: ind.color,
-                lineWidth: 2,
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: true,
-              })
-            : mainChart.addSeries(LineSeries, {
-                color: ind.color,
-                lineWidth: 2,
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: true,
-              });
-
-        const mappedLine = ind.data.map((d) => ({
-          time: Math.floor(new Date(d.time).getTime() / 1000) as any,
-          value: d.value,
-        }));
-
-        const uniqueLine = Array.from(
-          new Map(mappedLine.map((item) => [item.time, item])).values()
-        ).sort((a, b) => a.time - b.time);
-
-        lineSeries.setData(uniqueLine);
-      });
-    }
-
-    mainChart.timeScale().fitContent();
-
-    // 2. SYNCHRONIZED RSI(14) + BLUE DOWNTREND BREAKOUT SUB-PANE
-    let rsiChart: ReturnType<typeof createChart> | null = null;
-
-    if (rsiChartRef.current && rsiPane && rsiPane.rsi && rsiPane.rsi.length > 0) {
-      rsiChart = createChart(rsiChartRef.current, {
-        width: rsiChartRef.current.clientWidth || initialWidth,
-        height: 165,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#94a3b8',
-        },
-        grid: {
-          vertLines: { color: 'rgba(30, 41, 59, 0.35)' },
-          horzLines: { color: 'rgba(30, 41, 59, 0.35)' },
-        },
-        crosshair: {
-          vertLine: { color: '#64748b', width: 1, style: 3 },
-          horzLine: { color: '#64748b', width: 1, style: 3 },
-        },
-        timeScale: {
-          borderColor: 'rgba(30, 41, 59, 0.8)',
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        rightPriceScale: {
-          borderColor: 'rgba(30, 41, 59, 0.8)',
-        },
-      });
-
-      const rsiLineSeries =
-        typeof (rsiChart as any).addLineSeries === 'function'
-          ? (rsiChart as any).addLineSeries({
-              color: '#a855f7',
-              lineWidth: 2,
-              priceLineVisible: false,
-              lastValueVisible: true,
-            })
-          : rsiChart.addSeries(LineSeries, {
-              color: '#a855f7',
-              lineWidth: 2,
-              priceLineVisible: false,
-              lastValueVisible: true,
+        if (visibleNames[ind.name]) {
+          if (!refs.indicatorSeries[ind.name]) {
+            refs.indicatorSeries[ind.name] = refs.mainChart.addSeries(LineSeries, {
+              color: ind.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: true,
             });
-
-      const mappedRsi = rsiPane.rsi.map((d) => ({
-        time: Math.floor(new Date(d.time).getTime() / 1000) as any,
-        value: d.value,
-      }));
-      const uniqueRsi = Array.from(
-        new Map(mappedRsi.map((item) => [item.time, item])).values()
-      ).sort((a, b) => a.time - b.time);
-
-      rsiLineSeries.setData(uniqueRsi);
-
-      [
-        { price: 70, color: 'rgba(148, 163, 184, 0.45)', title: '70' },
-        { price: 50, color: 'rgba(148, 163, 184, 0.30)', title: '50' },
-        { price: 30, color: 'rgba(148, 163, 184, 0.45)', title: '30' },
-      ].forEach((lvl) => {
-        rsiLineSeries.createPriceLine({
-          price: lvl.price,
-          color: lvl.color,
-          lineWidth: 1,
-          lineStyle: 2,
-          axisLabelVisible: true,
-          title: lvl.title,
-        });
-      });
-
-      if (rsiPane.trendline && rsiPane.trendline.length > 1) {
-        const trendSeries =
-          typeof (rsiChart as any).addLineSeries === 'function'
-            ? (rsiChart as any).addLineSeries({
-                color: '#3b82f6',
-                lineWidth: 2,
-                priceLineVisible: false,
-                lastValueVisible: true,
-              })
-            : rsiChart.addSeries(LineSeries, {
-                color: '#3b82f6',
-                lineWidth: 2,
-                priceLineVisible: false,
-                lastValueVisible: true,
-              });
-
-        const mappedTrend = rsiPane.trendline.map((d) => ({
-          time: Math.floor(new Date(d.time).getTime() / 1000) as any,
-          value: d.value,
-        }));
-        const uniqueTrend = Array.from(
-          new Map(mappedTrend.map((item) => [item.time, item])).values()
-        ).sort((a, b) => a.time - b.time);
-
-        trendSeries.setData(uniqueTrend);
-      }
-
-      rsiChart.timeScale().fitContent();
-
-      mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range && rsiChart) {
-          rsiChart.timeScale().setVisibleLogicalRange(range);
-        }
-      });
-      rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) {
-          mainChart.timeScale().setVisibleLogicalRange(range);
+          }
+          const mappedLine = ind.data.map((d) => ({ time: Math.floor(new Date(d.time).getTime() / 1000) as any, value: d.value }));
+          const uniqueLine = Array.from(new Map(mappedLine.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
+          refs.indicatorSeries[ind.name].setData(uniqueLine);
+        } else if (refs.indicatorSeries[ind.name]) {
+          refs.mainChart.removeSeries(refs.indicatorSeries[ind.name]);
+          delete refs.indicatorSeries[ind.name];
         }
       });
     }
 
-    // Use ResizeObserver on the container itself so that when the container's size changes due to 
-    // flex/grid layout shifts, the chart resizes immediately
-    const updateChartDimensions = () => {
-      if (mainChartRef.current && mainChartRef.current.clientWidth > 0) {
-        mainChart.applyOptions({ width: mainChartRef.current.clientWidth });
+    if (rsiPane && refs.rsiChart) {
+      if (rsiPane.rsi && rsiPane.rsi.length > 0) {
+        const mappedRsi = rsiPane.rsi.map((d) => ({ time: Math.floor(new Date(d.time).getTime() / 1000) as any, value: d.value }));
+        const uniqueRsi = Array.from(new Map(mappedRsi.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
+        refs.rsiSeries.setData(uniqueRsi);
       }
-      if (rsiChartRef.current && rsiChart && rsiChartRef.current.clientWidth > 0) {
-        rsiChart.applyOptions({ width: rsiChartRef.current.clientWidth });
+      if (rsiPane.trendline && rsiPane.trendline.length > 1) {
+        const mappedTrend = rsiPane.trendline.map((d) => ({ time: Math.floor(new Date(d.time).getTime() / 1000) as any, value: d.value }));
+        const uniqueTrend = Array.from(new Map(mappedTrend.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
+        refs.trendSeries.setData(uniqueTrend);
       }
-    };
+    }
 
-    const resizeObserver = new ResizeObserver(() => {
-      // To wait for flexbox render time, we use a small delay before updating chart dimensions
-      requestAnimationFrame(updateChartDimensions);
-    });
+    // NOTE: We do not return and call `remove()` here! The chart continues to live.
+  }, [candles, indicators, rsiPane, height, visibleNames]); 
 
-    if (mainChartRef.current) resizeObserver.observe(mainChartRef.current);
-    if (rsiChartRef.current) resizeObserver.observe(rsiChartRef.current);
-
-    // At the first mount, force the chart to fit the container's width
-    setTimeout(updateChartDimensions, 50);
-
+  // 3rd stage: When the component is completely unmounted, clean up
+  useEffect(() => {
     return () => {
-      resizeObserver.disconnect();
-      mainChart.remove();
-      if (rsiChart) rsiChart.remove();
+      if (chartRefs.current) {
+        try { chartRefs.current.mainChart.remove(); } catch(e) {}
+        try { if (chartRefs.current.rsiChart) chartRefs.current.rsiChart.remove(); } catch(e) {}
+        chartRefs.current = null;
+      }
     };
-  }, [candles, indicators, rsiPane, height, visibleNames]);
+  }, []);
+
+  // 4th stage: Handle window resize to adjust chart width dynamically
+  useEffect(() => {
+    const updateDimensions = () => {
+      if (chartRefs.current) {
+        if (mainChartContainerRef.current) chartRefs.current.mainChart.applyOptions({ width: mainChartContainerRef.current.clientWidth });
+        if (rsiChartContainerRef.current && chartRefs.current.rsiChart) chartRefs.current.rsiChart.applyOptions({ width: rsiChartContainerRef.current.clientWidth });
+      }
+    };
+    const resizeObserver = new ResizeObserver(() => requestAnimationFrame(updateDimensions));
+    if (mainChartContainerRef.current) resizeObserver.observe(mainChartContainerRef.current);
+    if (rsiChartContainerRef.current) resizeObserver.observe(rsiChartContainerRef.current);
+    
+    return () => resizeObserver.disconnect();
+  }, []);
 
   const activeCount = indicators.filter((i) => visibleNames[i.name]).length;
 
   return (
     <div className="w-full space-y-2 overflow-hidden">
-      {/* Interactive Indicator Toggle Bar */}
       {indicators && indicators.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/60">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -356,12 +257,10 @@ export default function ChartWrapper({
         </div>
       )}
 
-      {/* Main Price Chart */}
       <div className="relative w-full">
-        <div ref={mainChartRef} className="w-full" />
+        <div ref={mainChartContainerRef} className="w-full" />
       </div>
 
-      {/* RSI(14) + Blue Downtrend Breakout Sub-Pane */}
       {rsiPane && rsiPane.rsi && rsiPane.rsi.length > 0 && (
         <div className="relative w-full pt-2 border-t border-slate-800/80">
           <div className="absolute top-3 left-2 z-10 flex flex-wrap items-center gap-2 pointer-events-none">
@@ -376,7 +275,7 @@ export default function ChartWrapper({
               </span>
             </div>
           </div>
-          <div ref={rsiChartRef} className="w-full" />
+          <div ref={rsiChartContainerRef} className="w-full" />
         </div>
       )}
     </div>

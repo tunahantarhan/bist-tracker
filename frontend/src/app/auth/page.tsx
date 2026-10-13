@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { ShieldAlert, TrendingUp, Lock, Mail, ChevronRight, User, CheckCircle2 } from 'lucide-react';
 import { API_URL } from '@/services/api';
 
@@ -84,18 +85,26 @@ export default function AuthPage() {
         </div>
       )}
 
+      {/* Desktop Left Brand Column */}
       <div className="hidden lg:flex w-1/2 flex-col justify-between p-12 bg-[#12161f] border-r border-slate-800/80 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
           <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-blue-600/10 blur-[120px] rounded-full"></div>
         </div>
 
         <div className="relative z-10">
-          <div className="flex items-center space-x-3 mb-16">
-            <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-[0_0_12px_#2563eb]">
+          {/* Logo redirecting to homepage */}
+          <Link 
+            href="/" 
+            className="inline-flex items-center space-x-3 mb-16 group cursor-pointer w-fit"
+            title="Ana Sayfaya Dön"
+          >
+            <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-[0_0_12px_#2563eb] group-hover:scale-105 transition-transform">
               <span className="font-mono text-sm font-black text-white">B</span>
             </div>
-            <span className="text-xl font-bold text-slate-100 tracking-tight">BIST Rule Engine</span>
-          </div>
+            <span className="text-xl font-bold text-slate-100 tracking-tight group-hover:text-blue-400 transition-colors">
+              BIST Rule Engine
+            </span>
+          </Link>
 
           <div className="space-y-6 max-w-md">
             <h1 className="text-4xl font-bold text-slate-100 leading-tight">
@@ -129,9 +138,26 @@ export default function AuthPage() {
         </div>
       </div>
 
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12">
+      {/* Right Form Column */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-md space-y-8">
           
+          {/* Centered Mobile Top Brand Logo (Visible only on mobile/tablet) */}
+          <div className="flex lg:hidden justify-center items-center mb-6">
+            <Link
+              href="/"
+              className="inline-flex items-center space-x-3 group cursor-pointer"
+              title="Ana Sayfaya Dön"
+            >
+              <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-[0_0_12px_#2563eb] group-hover:scale-105 transition-transform">
+                <span className="font-mono text-sm font-black text-white">B</span>
+              </div>
+              <span className="text-xl font-bold text-slate-100 tracking-tight group-hover:text-blue-400 transition-colors">
+                BIST Rule Engine
+              </span>
+            </Link>
+          </div>
+
           <div className="text-center lg:text-left">
             <h2 className="text-3xl font-bold text-slate-100">
               {isLogin ? 'Hoş Geldiniz' : 'Hesap Oluşturun'}

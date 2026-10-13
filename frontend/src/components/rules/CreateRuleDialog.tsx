@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -18,11 +18,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { createRule } from '@/services/api';
+import { createRule, updateRule } from '@/services/api';
 import { Plus, Filter, Sparkles } from 'lucide-react';
+import { Rule } from '@/types';
 
 interface CreateRuleDialogProps {
   onRuleCreated?: () => void;
+  editingRule?: Rule | null;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const TIMEFRAMES = [
@@ -65,18 +69,32 @@ const TARGET_TYPES = [
 
 const getTimeframeLabel = (val: string) =>
   TIMEFRAMES.find((tf) => tf.value === val)?.label || val;
-
 const getIndicatorLabel = (val: string) =>
   INDICATORS.find((i) => i.value === val)?.label || val;
-
 const getConditionLabel = (val: string) =>
   CONDITIONS.find((c) => c.value === val)?.label || val;
-
 const getTargetTypeLabel = (val: string) =>
   TARGET_TYPES.find((t) => t.value === val)?.label || val;
 
-export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProps) {
-  const [open, setOpen] = useState(false);
+export default function CreateRuleDialog({ 
+  onRuleCreated, 
+  editingRule, 
+  isOpen, 
+  onOpenChange 
+}: CreateRuleDialogProps) {
+  
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = isOpen !== undefined;
+  const open = isControlled ? isOpen : internalOpen;
+
+  const handleOpenChange = (val: boolean) => {
+    if (isControlled && onOpenChange) {
+      onOpenChange(val);
+    } else {
+      setInternalOpen(val);
+    }
+  };
+
   const [loading, setLoading] = useState(false);
 
   const [name, setName] = useState('');
@@ -92,14 +110,54 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
   const [indicator2, setIndicator2] = useState('RSI_TRENDLINE');
   const [ind2Length, setInd2Length] = useState('21');
 
-  // RSI Trendline specific parameters
   const [trendLookback, setTrendLookback] = useState('60');
   const [trendMinPeak, setTrendMinPeak] = useState('55');
-  const [trendSlope, setTrendSlope] = useState(''); // Optional manual negative slope
+  const [trendSlope, setTrendSlope] = useState('');
+  const [trendMaxEnd, setTrendMaxEnd] = useState('40');
 
   const [scoreImpact, setScoreImpact] = useState('25.00');
 
-  // Quick preset loader for Consultant's 4h RSI Breakout or 5m/15m MA Crossover
+  // When the edit mode is opened, populate the form with the existing rule data
+  useEffect(() => {
+    if (editingRule && open) {
+      setName(editingRule.name || '');
+      setTimeframe(editingRule.timeframe || '4h');
+      setIsPrimaryFilter(Boolean(editingRule.is_primary_filter));
+      setIndicator1(editingRule.indicator_1 || 'RSI');
+      setInd1Length(editingRule.indicator_1_params?.length?.toString() || '14');
+      setCondition(editingRule.condition || '>');
+      setTargetType((editingRule.target_type as 'static' | 'indicator') || 'indicator');
+      setStaticValue(editingRule.static_value !== null && editingRule.static_value !== undefined ? String(editingRule.static_value) : '30');
+      setIndicator2(editingRule.indicator_2 || 'RSI_TRENDLINE');
+      setInd2Length(editingRule.indicator_2_params?.length?.toString() || '21');
+
+      if (editingRule.indicator_2_params) {
+        setTrendLookback(editingRule.indicator_2_params.lookback?.toString() || '60');
+        setTrendMinPeak(editingRule.indicator_2_params.min_peak?.toString() || '55');
+        setTrendMaxEnd(editingRule.indicator_2_params.max_trend_end?.toString() || '40');
+        setTrendSlope(editingRule.indicator_2_params.slope !== undefined && editingRule.indicator_2_params.slope !== null ? String(editingRule.indicator_2_params.slope) : '');
+      }
+      setScoreImpact(editingRule.score_impact !== undefined ? String(editingRule.score_impact) : '25.00');
+    } else if (!editingRule && open) {
+      // Reset the form when creating a new rule
+      setName('');
+      setTimeframe('4h');
+      setIsPrimaryFilter(false);
+      setIndicator1('RSI');
+      setInd1Length('14');
+      setCondition('>');
+      setTargetType('indicator');
+      setStaticValue('30');
+      setIndicator2('RSI_TRENDLINE');
+      setInd2Length('21');
+      setTrendLookback('60');
+      setTrendMinPeak('55');
+      setTrendSlope('');
+      setTrendMaxEnd('40');
+      setScoreImpact('25.00');
+    }
+  }, [editingRule, open]);
+
   const applyPreset = (preset: 'rsi_breakout_4h' | 'ma_cross_15m' | 'ma_cross_5m') => {
     if (preset === 'rsi_breakout_4h') {
       setName('4S RSI (14) Düşen Trend Kırılımı (Mavi Çizgi)');
@@ -112,6 +170,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
       setIndicator2('RSI_TRENDLINE');
       setTrendLookback('60');
       setTrendMinPeak('55');
+      setTrendMaxEnd('40');
       setScoreImpact('25.00');
     } else if (preset === 'ma_cross_15m') {
       setName('Kısa Vade: MA(9) > MA(14) Trendi');
@@ -146,6 +205,7 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
         length: parseInt(ind1Length, 10) || 14,
         lookback: parseInt(trendLookback, 10) || 60,
         min_peak: parseFloat(trendMinPeak) || 55.0,
+        max_trend_end: parseFloat(trendMaxEnd) || 40.0,
       };
       if (trendSlope.trim() !== '' && !isNaN(parseFloat(trendSlope))) {
         p.slope = parseFloat(trendSlope);
@@ -163,28 +223,34 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
     if (!name || !scoreImpact) return;
 
     setLoading(true);
-    try {
-      await createRule({
-        name,
-        description: name,
-        timeframe,
-        is_primary_filter: isPrimaryFilter,
-        indicator_1: indicator1,
-        indicator_1_params: buildParams(indicator1, ind1Length),
-        condition,
-        target_type: targetType,
-        static_value: targetType === 'static' ? parseFloat(staticValue) : null,
-        indicator_2: targetType === 'indicator' ? indicator2 : null,
-        indicator_2_params: targetType === 'indicator' ? buildParams(indicator2, ind2Length) : null,
-        score_impact: parseFloat(scoreImpact),
-        is_active: true,
-      } as any);
+    const payload = {
+      name,
+      description: name,
+      timeframe,
+      is_primary_filter: isPrimaryFilter,
+      indicator_1: indicator1,
+      indicator_1_params: buildParams(indicator1, ind1Length),
+      condition,
+      target_type: targetType,
+      static_value: targetType === 'static' ? parseFloat(staticValue) : null,
+      indicator_2: targetType === 'indicator' ? indicator2 : null,
+      indicator_2_params: targetType === 'indicator' ? buildParams(indicator2, ind2Length) : null,
+      score_impact: parseFloat(scoreImpact),
+      is_active: editingRule ? editingRule.is_active : true,
+    };
 
-      setOpen(false);
-      setName('');
+    try {
+      if (editingRule && editingRule.id) {
+        await updateRule(editingRule.id, payload);
+      } else {
+        await createRule(payload as any);
+      }
+
+      handleOpenChange(false);
       if (onRuleCreated) onRuleCreated();
+      if (!editingRule) setName('');
     } catch (error) {
-      console.error('Failed to create rule:', error);
+      console.error('Kural kaydedilemedi:', error);
     } finally {
       setLoading(false);
     }
@@ -202,11 +268,11 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
         },
       });
       if (res.ok) {
-        setOpen(false);
+        handleOpenChange(false);
         if (onRuleCreated) onRuleCreated();
       }
     } catch (error) {
-      console.error('Failed to seed default consultant rules:', error);
+      console.error('Varsayılan kurallar yüklenemedi:', error);
     } finally {
       setLoading(false);
     }
@@ -216,68 +282,69 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
   const showInd2Period = indicator2 === 'SMA' || indicator2 === 'EMA' || indicator2 === 'RSI';
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger>
-        <span className="inline-flex items-center space-x-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all duration-200 hover:bg-blue-500 hover:shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:-translate-y-0.5 active:translate-y-0 cursor-pointer">
-          <Plus className="h-4 w-4" />
-          <span>Yeni Algoritmik Kural Ekle</span>
-        </span>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      {!isControlled && (
+        <DialogTrigger>
+          <span className="inline-flex items-center space-x-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all duration-200 hover:bg-blue-500 hover:shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:-translate-y-0.5 active:translate-y-0 cursor-pointer">
+            <Plus className="h-4 w-4" />
+            <span>Yeni Algoritmik Kural Ekle</span>
+          </span>
+        </DialogTrigger>
+      )}
       <DialogContent className="border border-slate-700/80 bg-[#12161f] text-slate-100 sm:max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold text-slate-100">
-            Çoklu Periyot & Dinamik Skor Kuralı Tanımla
+            {editingRule ? 'Kuralı Düzenle' : 'Çoklu Periyot & Dinamik Skor Kuralı Tanımla'}
           </DialogTitle>
         </DialogHeader>
 
-        {/* Highlighted Quick Strategy Presets & 1-Click Full Suite Seeder */}
-        <div className="rounded-xl border border-blue-500/30 bg-[#161b26] p-3.5 space-y-3">
-          <div className="flex items-center space-x-1.5 text-xs font-semibold text-blue-400">
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Hızlı Şablonlar (Tek Tıkla Doldur):</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => applyPreset('rsi_breakout_4h')}
-              className="text-[11px] font-mono bg-blue-600/15 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
-            >
-              ⚡ 4S RSI Mavi Çizgi Kırılımı (Ana Filtre)
-            </button>
-            <button
-              type="button"
-              onClick={() => applyPreset('ma_cross_15m')}
-              className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
-            >
-              📈 15Dk MA(9) &gt; MA(14)
-            </button>
-            <button
-              type="button"
-              onClick={() => applyPreset('ma_cross_5m')}
-              className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
-            >
-              🚀 5Dk MA(9) x MA(21)
-            </button>
-          </div>
+        {!editingRule && (
+          <div className="rounded-xl border border-blue-500/30 bg-[#161b26] p-3.5 space-y-3">
+            <div className="flex items-center space-x-1.5 text-xs font-semibold text-blue-400">
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Hızlı Şablonlar (Tek Tıkla Doldur):</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => applyPreset('rsi_breakout_4h')}
+                className="text-[11px] font-mono bg-blue-600/15 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
+              >
+                ⚡ 4S RSI Mavi Çizgi Kırılımı (Ana Filtre)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('ma_cross_15m')}
+                className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
+              >
+                📈 15Dk MA(9) &gt; MA(14)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('ma_cross_5m')}
+                className="text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-md px-2.5 py-1 transition-colors cursor-pointer"
+              >
+                🚀 5Dk MA(9) x MA(21)
+              </button>
+            </div>
 
-          {/* 1-Click Full 8-Rule Consultant Suite Button */}
-          <div className="pt-2.5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span className="text-[11px] text-slate-400">
-              RSI + Stoch + MACD + 6 Adet MA (9-200) + Bollinger (22,2):
-            </span>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={handleSeedConsultantSuite}
-              className="text-[11px] font-mono font-semibold bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 rounded-lg px-3 py-1.5 transition-all cursor-pointer shrink-0"
-            >
-              {loading ? 'Yükleniyor...' : '📦 Tüm Paketi Tek Tıkla Yükle (8 Kural)'}
-            </button>
+            <div className="pt-2.5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-400">
+                RSI + Stoch + MACD + 6 Adet MA (9-200) + Bollinger (22,2):
+              </span>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleSeedConsultantSuite}
+                className="text-[11px] font-mono font-semibold bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 rounded-lg px-3 py-1.5 transition-all cursor-pointer shrink-0"
+              >
+                {loading ? 'Yükleniyor...' : '📦 Tüm Paketi Tek Tıkla Yükle (8 Kural)'}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
-          {/* Rule Name */}
           <div className="space-y-1.5">
             <Label className="text-xs font-medium text-slate-300">Kural Adı / Açıklaması</Label>
             <Input
@@ -289,7 +356,6 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
             />
           </div>
 
-          {/* Timeframe & Funnel Role (Primary Filter vs Score Rule) */}
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-6 space-y-1.5">
               <Label className="text-xs font-medium text-slate-300">Zaman Dilimi (Mum Periyodu)</Label>
@@ -320,14 +386,13 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
               >
                 <span className="flex items-center space-x-1.5 truncate">
                   <Filter className="h-3.5 w-3.5 shrink-0" />
-                  <span>{isPrimaryFilter ? 'Ana Filtre (Hisse Daraltıcı)' : 'Ek Skor Kuralı'}</span>
+                  <span>{isPrimaryFilter ? 'Ana Filtre' : 'Ek Skor Kuralı'}</span>
                 </span>
                 <span className={`h-2 w-2 rounded-full ${isPrimaryFilter ? 'bg-amber-400' : 'bg-slate-600'}`} />
               </button>
             </div>
           </div>
 
-          {/* 1. Indicator Selection */}
           <div className="grid grid-cols-12 gap-4">
             <div className={`${showInd1Period ? 'col-span-8' : 'col-span-12'} space-y-1.5`}>
               <Label className="text-xs font-medium text-slate-300">1. İndikatör</Label>
@@ -351,14 +416,12 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
                   type="number"
                   value={ind1Length}
                   onChange={(e) => setInd1Length(e.target.value)}
-                  placeholder="9, 14, 21..."
                   className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
                 />
               </div>
             )}
           </div>
 
-          {/* Condition & Target Type */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-slate-300">Koşul Operatörü</Label>
@@ -393,7 +456,6 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
             </div>
           </div>
 
-          {/* Target Value or 2nd Indicator */}
           {targetType === 'static' ? (
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-slate-300">Sabit Eşik Değer</Label>
@@ -402,7 +464,6 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
                 step="any"
                 value={staticValue}
                 onChange={(e) => setStaticValue(e.target.value)}
-                placeholder="Örn: RSI için 30 veya 50"
                 className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
                 required
               />
@@ -432,51 +493,33 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
                       type="number"
                       value={ind2Length}
                       onChange={(e) => setInd2Length(e.target.value)}
-                      placeholder="14, 21, 50..."
                       className="border-slate-700/80 bg-[#161b26] text-slate-100 transition-colors hover:border-slate-600 focus:border-blue-500"
                     />
                   </div>
                 )}
               </div>
 
-              {/* Extra mathematical parameters when RSI Blue Trendline is selected */}
               {indicator2 === 'RSI_TRENDLINE' && (
                 <div className="rounded-lg border border-blue-500/25 bg-blue-950/20 p-3 space-y-3">
                   <div className="text-[11px] text-blue-300 font-medium">
-                    📐 Mavi Çizgi (RSI Düşen Trend) Matematiksel Parametreleri
+                    📐 Mavi Çizgi Matematiksel Parametreleri
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-slate-400">Tepe Arama (Mum)</Label>
-                      <Input
-                        type="number"
-                        value={trendLookback}
-                        onChange={(e) => setTrendLookback(e.target.value)}
-                        placeholder="60"
-                        className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono"
-                      />
+                      <Label className="text-[11px] text-slate-400">Tepe (Mum)</Label>
+                      <Input type="number" value={trendLookback} onChange={(e) => setTrendLookback(e.target.value)} className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono" />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-slate-400">Min. Tepe RSI</Label>
-                      <Input
-                        type="number"
-                        step="any"
-                        value={trendMinPeak}
-                        onChange={(e) => setTrendMinPeak(e.target.value)}
-                        placeholder="55"
-                        className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono"
-                      />
+                      <Label className="text-[11px] text-slate-400">Min. RSI</Label>
+                      <Input type="number" step="any" value={trendMinPeak} onChange={(e) => setTrendMinPeak(e.target.value)} className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono" />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-slate-400">Sabit Eğim (Opsiyonel)</Label>
-                      <Input
-                        type="number"
-                        step="0.05"
-                        value={trendSlope}
-                        onChange={(e) => setTrendSlope(e.target.value)}
-                        placeholder="Otomatik (-0.35)"
-                        className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono"
-                      />
+                      <Label className="text-[11px] text-slate-400">Maks. Dip RSI</Label>
+                      <Input type="number" step="any" value={trendMaxEnd} onChange={(e) => setTrendMaxEnd(e.target.value)} className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-400">Sabit Eğim</Label>
+                      <Input type="number" step="0.05" value={trendSlope} onChange={(e) => setTrendSlope(e.target.value)} placeholder="Oto" className="h-8 text-xs border-slate-700 bg-[#161b26] text-slate-100 font-mono" />
                     </div>
                   </div>
                 </div>
@@ -484,15 +527,13 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
             </div>
           )}
 
-          {/* Millimetric Score Impact */}
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-slate-300">Skor Etkisi (Milimetrik Puan)</Label>
+            <Label className="text-xs font-medium text-slate-300">Skor Etkisi Puanı</Label>
             <Input
               type="number"
               step="0.01"
               value={scoreImpact}
               onChange={(e) => setScoreImpact(e.target.value)}
-              placeholder="Örn: 25.00 veya 12.50"
               className="border-slate-700/80 bg-[#161b26] text-slate-100 font-mono transition-colors hover:border-slate-600 focus:border-blue-500"
               required
             />
@@ -502,17 +543,17 @@ export default function CreateRuleDialog({ onRuleCreated }: CreateRuleDialogProp
             <Button
               type="button"
               variant="outline"
-              onClick={() => setOpen(false)}
-              className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-slate-100 cursor-pointer transition-all duration-200"
+              onClick={() => handleOpenChange(false)}
+              className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-slate-100"
             >
               İptal
             </Button>
             <Button
               type="submit"
               disabled={loading}
-              className="bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.3)] hover:shadow-[0_0_18px_rgba(37,99,235,0.5)] cursor-pointer transition-all duration-200"
+              className="bg-blue-600 hover:bg-blue-500 text-white"
             >
-              {loading ? 'Kaydediliyor...' : 'Kuralı Kaydet'}
+              {loading ? 'Kaydediliyor...' : editingRule ? 'Değişiklikleri Kaydet' : 'Kuralı Kaydet'}
             </Button>
           </div>
         </form>

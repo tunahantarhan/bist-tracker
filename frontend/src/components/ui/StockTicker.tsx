@@ -9,135 +9,98 @@ interface TickerItem {
   change_pct: number;
 }
 
+interface StockTickerProps {
+  items?: { symbol: string; current_price: number; change_pct: number }[];
+}
+
 const TickerCell = ({ item }: { item: TickerItem }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
-  const [displayPrice, setDisplayPrice] = useState(item.current_price);
-  const [displayChange, setDisplayChange] = useState(item.change_pct);
   const prevPrice = useRef(item.current_price);
 
   useEffect(() => {
-    if (item.current_price > prevPrice.current) {
-      // 1. Lit background green for price increase
-      setFlash('up');
-      
-      // 2. Update the number after half a second (500ms)
-      const updateTimer = setTimeout(() => {
-        setDisplayPrice(item.current_price);
-        setDisplayChange(item.change_pct);
-      }, 1000);
-
-      // 3. Remove the background color after one second
-      const flashTimer = setTimeout(() => setFlash(null), 2000);
-      
+    if (item.current_price !== prevPrice.current) {
+      setFlash(item.current_price > prevPrice.current ? 'up' : 'down');
       prevPrice.current = item.current_price;
-      return () => { clearTimeout(updateTimer); clearTimeout(flashTimer); };
       
-    } else if (item.current_price < prevPrice.current) {
-      // 1. Lit background red for price decrease
-      setFlash('down');
-      
-      // 2. Update the number after half a second (500ms)
-      const updateTimer = setTimeout(() => {
-        setDisplayPrice(item.current_price);
-        setDisplayChange(item.change_pct);
-      }, 1000);
-
-      // 3. Remove the background color after one second
-      const flashTimer = setTimeout(() => setFlash(null), 2000);
-      
-      prevPrice.current = item.current_price;
-      return () => { clearTimeout(updateTimer); clearTimeout(flashTimer); };
+      const timer = setTimeout(() => setFlash(null), 3000);
+      return () => clearTimeout(timer);
     }
-  }, [item.current_price, item.change_pct]);
+  }, [item.current_price]);
 
   return (
-    <div 
-      className={`flex items-center space-x-2 px-6 border-r border-slate-800/50 h-10 transition-colors duration-500
-        ${flash === 'up' ? 'bg-emerald-500/20' : flash === 'down' ? 'bg-rose-500/20' : 'hover:bg-slate-800/30'}
+    <a 
+      href={`/detay/${item.symbol}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`${item.symbol} detayını yeni sekmede görüntüle`}
+      className={`flex items-center space-x-2 px-6 py-2 border-r border-slate-800/50 cursor-pointer transition-colors duration-500 group select-none shrink-0
+        ${flash === 'up' ? 'bg-emerald-500/20' : flash === 'down' ? 'bg-rose-500/20' : 'hover:bg-slate-800/40'}
       `}
     >
-      <span className="text-sm font-semibold text-slate-300">{item.symbol}</span>
-      <span className={`text-sm font-mono transition-colors duration-300 ${flash === 'up' ? 'text-emerald-400' : flash === 'down' ? 'text-rose-400' : 'text-slate-100'}`}>
-        ₺{displayPrice.toFixed(2)}
+      <span className="text-xs font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
+        {item.symbol}
       </span>
-      <span className={`flex items-center text-xs font-medium ${displayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-        {displayChange >= 0 ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
-        %{Math.abs(displayChange).toFixed(2)}
+      <span className={`text-xs font-mono transition-colors duration-300 ${flash === 'up' ? 'text-emerald-400' : flash === 'down' ? 'text-rose-400' : 'text-slate-100'}`}>
+        ₺{item.current_price.toFixed(2)}
       </span>
-    </div>
+      <span className={`flex items-center text-[10px] font-mono font-semibold ${item.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+        {item.change_pct >= 0 ? <TrendingUp className="h-3 w-3 mr-0.5" /> : <TrendingDown className="h-3 w-3 mr-0.5" />}
+        {item.change_pct >= 0 ? '+' : ''}{item.change_pct}%
+      </span>
+    </a>
   );
 };
 
-export default function StockTicker() {
-  const [tickerItems, setTickerItems] = useState<TickerItem[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function StockTicker({ items }: StockTickerProps) {
+  const [internalTickerData, setInternalTickerData] = useState<TickerItem[]>([]);
 
+  // Fetch ticker items only if not provided from parent dashboard props
   useEffect(() => {
-    const fetchTickerData = async (isInitial = false) => {
+    if (items && items.length > 0) return;
+
+    const fetchTickerData = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/api/v1/market/ticker');
+        const res = await fetch('http://127.0.0.1:8000/api/v1/market/ticker', { cache: 'no-store' });
         if (res.ok) {
-          const newData: TickerItem[] = await res.json();
-          
-          if (isInitial) {
-            setTickerItems(newData);
-            setLoading(false);
-          } else {
-            newData.forEach((newItem) => {
-              const randomDelay = Math.random() * 1000; // Gecikmeyi maksimum 1 saniyeye düşürdük
-              setTimeout(() => {
-                setTickerItems((prev) => {
-                  const exists = prev.find(p => p.symbol === newItem.symbol);
-                  if (!exists) return [...prev, newItem];
-                  return prev.map(p => p.symbol === newItem.symbol ? newItem : p);
-                });
-              }, randomDelay);
-            });
-          }
+          const data = await res.json();
+          setInternalTickerData(data);
         }
       } catch (error) {
-        console.error('Ticker verisi çekilemedi:', error);
-        setLoading(false);
+        console.warn('Ticker data fetch warning:', error);
       }
     };
 
-    fetchTickerData(true);
-
-    const intervalId = setInterval(() => fetchTickerData(false), 15000);
-
+    fetchTickerData();
+    const intervalId = setInterval(fetchTickerData, 15000);
     return () => clearInterval(intervalId);
-  }, []);
+  }, [items]);
 
-  const displayItems = tickerItems.length > 0 
-    ? [...tickerItems, ...tickerItems, ...tickerItems] 
-    : [];
+  const activeItems = (items && items.length > 0) ? items : internalTickerData;
 
-  if (loading && tickerItems.length === 0) return null;
-  if (tickerItems.length === 0) return null;
+  if (activeItems.length === 0) return null;
+  const animationDuration = Math.max(activeItems.length * 3.5, 20);
 
   return (
-    <div className="w-full bg-[#080a0f] border-b border-slate-800/80 flex items-center h-10 overflow-hidden relative select-none">
-      <div className="absolute left-0 top-0 w-16 h-full bg-gradient-to-r from-[#080a0f] to-transparent z-10 pointer-events-none"></div>
-      <div className="absolute right-0 top-0 w-16 h-full bg-gradient-to-l from-[#080a0f] to-transparent z-10 pointer-events-none"></div>
-
+    <div className="w-full bg-[#0b0e14] border-b border-slate-800/80 overflow-hidden relative z-30 flex">
       <style dangerouslySetInnerHTML={{__html: `
-        @keyframes ticker {
+        @keyframes custom-scroll-left {
           0% { transform: translateX(0); }
-          100% { transform: translateX(-33.333%); }
+          100% { transform: translateX(-50%); }
         }
-        .animate-ticker {
+        .custom-ticker-track {
           display: flex;
+          align-items: center;
           width: max-content;
-          animation: ticker 120s linear infinite;
+          animation: custom-scroll-left ${animationDuration}s linear infinite;
         }
-        .animate-ticker:hover {
+        .custom-ticker-track:hover {
           animation-play-state: paused;
         }
       `}} />
-
-      <div className="animate-ticker cursor-default">
-        {displayItems.map((item, idx) => (
-          <TickerCell key={`${item.symbol}-${idx}`} item={item} />
+      
+      <div className="custom-ticker-track">
+        {activeItems.concat(activeItems).map((stock, idx) => (
+          <TickerCell key={`${stock.symbol}-${idx}`} item={stock} />
         ))}
       </div>
     </div>

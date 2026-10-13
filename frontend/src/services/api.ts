@@ -17,7 +17,6 @@ const getAuthHeaders = () => {
   return headers;
 };
 
-// Centralized fetch wrapper that safely handles network errors and 401 responses
 async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
   let res: Response;
   try {
@@ -29,7 +28,6 @@ async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Re
       },
     });
   } catch (err: any) {
-    // Re-throw AbortError silently so rapid button clicks don't trigger error overlays
     if (err?.name === 'AbortError') {
       throw err;
     }
@@ -117,16 +115,31 @@ export async function createRule(
   return await res.json();
 }
 
+// Rule update (for both editing and active/inactive toggle)
+export async function updateRule(id: number, ruleData: any): Promise<Rule> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/rules/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(ruleData),
+  });
+  if (!res.ok) throw new Error('Kural güncellenemedi');
+  return await res.json();
+}
+
+export async function deleteRule(id: number): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/rules/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Kural silinemedi');
+  return await res.json();
+}
+
 export async function fetchMarketData(
   symbol: string,
   interval: string = '4h',
   period: string = '6mo',
   signal?: AbortSignal
 ): Promise<MarketData> {
-  const params = new URLSearchParams({
-    interval,
-    period,
-  });
+  const params = new URLSearchParams({ interval, period });
   const res = await fetchWithAuth(
     `${API_BASE_URL}/market/${symbol}?${params.toString()}`,
     { cache: 'no-store', signal }
@@ -195,19 +208,11 @@ export async function fetchActiveUniverse(): Promise<string[]> {
   return await res.json();
 }
 
-export async function updateActiveUniverse(symbols: string[]): Promise<any> {
+export const updateActiveUniverse = async (symbols: string[]) => {
   const res = await fetchWithAuth(`${API_BASE_URL}/market/universe/update`, {
     method: 'POST',
     body: JSON.stringify(symbols),
   });
-  if (!res.ok) throw new Error('Hisse evreni güncellenemedi');
+  if (!res.ok) throw new Error('Evren güncellenirken bir hata oluştu');
   return await res.json();
-}
-
-export async function deleteRule(id: number): Promise<any> {
-  const res = await fetchWithAuth(`${API_BASE_URL}/rules/${id}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error('Kural silinemedi');
-  return await res.json();
-}
+};
