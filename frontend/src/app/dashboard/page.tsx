@@ -5,6 +5,7 @@ import ChartWrapper from '@/components/charts/ChartWrapper';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import StockSearch from '@/components/ui/StockSearch';
 import {
+  API_URL,
   fetchMarketData,
   MarketData,
   fetchWatchlist,
@@ -106,6 +107,8 @@ export default function DashboardPage() {
 
   // Dedicated DOM reference to scroll directly to the chart container
   const chartSectionRef = useRef<HTMLDivElement>(null);
+
+  const chartCacheRef = useRef<Record<string, { candles: any[]; indicators?: any[]; rsi_pane?: any }>>({});
 
   useEffect(() => {
     selectedSymbolRef.current = selectedSymbol;
@@ -224,20 +227,35 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Fetches market data for the target stock
+  // Fetches market data for the target stock with instant client cache fallback
   const loadMarket = useCallback(async (symbol: string, interval: string, period: string, isBackground = false, signal?: AbortSignal) => {
-    if (!isBackground) setLoadingMarket(true);
+    const cacheKey = `${symbol}_${interval}_${period}`;
+    const cachedData = chartCacheRef.current[cacheKey];
+
+    // 1. If cached data exists and it's not a background refresh, render immediately (0ms)
+    if (cachedData && !isBackground) {
+      setChartData(cachedData);
+      setLoadingMarket(false);
+    } else if (!isBackground) {
+      setLoadingMarket(true);
+    }
+
     try {
       const data = await fetchMarketData(symbol, interval, period, signal);
       setMarketData(data);
 
-      // Only refresh chart layout when explicitly requested or switched
-      if (!isBackground) {
-        setChartData({
-          candles: data.candles,
-          indicators: data.indicators || [],
-          rsi_pane: data.rsi_pane,
-        });
+      const newChartPayload = {
+        candles: data.candles,
+        indicators: data.indicators || [],
+        rsi_pane: data.rsi_pane,
+      };
+
+      // 2. Save fresh data to client cache
+      chartCacheRef.current[cacheKey] = newChartPayload;
+
+      // 3. Update chart state if it was a user click or if cache was empty
+      if (!isBackground || !cachedData) {
+        setChartData(newChartPayload);
       }
       
       if (data.score !== undefined) {
@@ -252,42 +270,43 @@ export default function DashboardPage() {
 
   // Initial dashboard setup (runs only on initial page load)
   const initializeDashboard = useCallback(async () => {
-    try {
-      const [watchlistData, overviewData] = await Promise.allSettled([
-        fetchWatchlist(), fetchMarketOverview(),
-      ]);
-
-      let initialSymbol: string | null = null;
-
-      if (watchlistData.status === 'fulfilled') {
-        const symbols = watchlistData.value.map((item: any) => item.symbol);
+    // 1. Fetch Watchlist independently (renders in ~10ms)
+    fetchWatchlist()
+      .then((data) => {
+        const symbols = data.map((item: any) => item.symbol);
         setWatchlist(symbols);
-        if (symbols.length > 0) initialSymbol = symbols[0];
-      }
-
-      if (overviewData.status === 'fulfilled') {
-        const ov = overviewData.value;
-        setOverview(ov);
-        const scoresMap: Record<string, number> = {};
-        const namesMap: Record<string, string> = { ...TICKER_NAMES };
-        
-        ov.items.forEach((item) => {
-          scoresMap[item.symbol] = item.score;
-          namesMap[item.symbol] = item.name; 
-        });
-        
-        setStockScores(scoresMap);
-        setDynamicNames(namesMap);
-
-        if (!initialSymbol && ov.top_scored.length > 0) {
-          initialSymbol = ov.top_scored[0].symbol;
+        if (symbols.length > 0) {
+          setSelectedSymbol((curr) => curr || symbols[0]);
         }
-      }
+      })
+      .catch((err) => console.warn('Watchlist init warning:', err));
 
-      // Assign initial stock only if no selection has been made yet
-      setSelectedSymbol((current) => current || initialSymbol);
+    // 2. Fetch Ticker immediately on initial load (0s delay)
+    fetch(`${API_URL}/market/ticker`, { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setLiveTickerData(data))
+      .catch((err) => console.warn('Ticker init warning:', err));
+
+    // 3. Fetch Overview (RSI and Top Scored lists)
+    try {
+      const ov = await fetchMarketOverview();
+      setOverview(ov);
+      const scoresMap: Record<string, number> = {};
+      const namesMap: Record<string, string> = { ...TICKER_NAMES };
+
+      ov.items.forEach((item) => {
+        scoresMap[item.symbol] = item.score;
+        namesMap[item.symbol] = item.name;
+      });
+
+      setStockScores(scoresMap);
+      setDynamicNames(namesMap);
+
+      if (ov.top_scored.length > 0) {
+        setSelectedSymbol((curr) => curr || ov.top_scored[0].symbol);
+      }
     } catch (err) {
-      console.warn('Dashboard init warning:', err);
+      console.warn('Overview init warning:', err);
     } finally {
       setLoadingOverview(false);
     }
@@ -384,19 +403,19 @@ export default function DashboardPage() {
     const runHeartbeat = async () => {
       const currentSym = selectedSymbolRef.current;
       await Promise.allSettled([
-        // 1. Ticker data (Single query shared between top ticker and Top 10 priced list)
-        fetch('http://127.0.0.1:8000/api/v1/market/ticker', { cache: 'no-store' })
+        fetch(`${API_URL}/market/ticker`, { cache: 'no-store' })
           .then((res) => (res.ok ? res.json() : []))
           .then((data) => setLiveTickerData(data)),
 
-        // 2. Left menu RSI lists and scores
         refreshOverview(),
 
-        // 3. Current stock market data update in background mode (preserves chart zoom state)
         currentSym ? loadMarket(currentSym, chartConfig.interval, chartConfig.period, true) : Promise.resolve(),
       ]);
+      setLoadingOverview(false);
     };
 
+    // Run once on mount, then continue every 15s
+    runHeartbeat();
     const heartbeatTimer = setInterval(runHeartbeat, 15000);
     return () => clearInterval(heartbeatTimer);
   }, [isAuthenticated, chartConfig, loadMarket, refreshOverview]);
@@ -807,7 +826,7 @@ export default function DashboardPage() {
                            {marketData?.has_primary_filter && (
                              <span className={`px-2 py-1 rounded border text-[10px] font-mono font-semibold flex items-center space-x-1 ${marketData.primary_filter_passed ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
                                <Filter className="h-3 w-3" />
-                               <span>{marketData.primary_filter_passed ? 'FİLTRE OK' : 'BEKLENİYOR'}</span>
+                               <span>{marketData.primary_filter_passed ? 'FİLTRE OK' : 'FİLTRE BEKLENİYOR'}</span>
                              </span>
                            )}
                         </div>

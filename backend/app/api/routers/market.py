@@ -4,6 +4,7 @@ import asyncio
 import pandas as pd
 import yfinance as yf
 from app.providers.yfinance_provider import YFinanceProvider
+from app.services.cache_service import CacheService
 
 router = APIRouter(prefix="/market", tags=["Market"])
 provider = YFinanceProvider()
@@ -111,25 +112,22 @@ TICKER_INFO = {
     "ZOREN": "Zorlu Enerji Elektrik Üretim"
 }
 
-_ticker_cache = {
-    "data": [],
-    "last_updated": None
-}
-CACHE_TTL_SECONDS = 10
+CACHE_KEY_TICKER = "bist_ticker_data_v1"
+CACHE_TTL_SECONDS = 60
 
 @router.get("/ticker")
 async def get_ticker_data():
-    now = datetime.now()
-    
-    if _ticker_cache["last_updated"] and (now - _ticker_cache["last_updated"]).total_seconds() < CACHE_TTL_SECONDS:
-        return _ticker_cache["data"]
+    # 1. Redis Cache Kontrolü (< 5ms)
+    cached = await CacheService.get_json(CACHE_KEY_TICKER)
+    if cached:
+        return cached
 
+    # 2. Cache Miss -> Toplu Yahoo Finance İndirmesi
     def _fetch_bulk():
         symbols = list(TICKER_INFO.keys())
         yf_syms_list = [f"{s}.IS" if not s.endswith(".IS") else s for s in symbols]
         yf_syms_str = " ".join(yf_syms_list)
         
-        # Download all symbols in exactly 1 HTTP request
         df = yf.download(yf_syms_str, period="5d", interval="1d", progress=False)
         res = []
         
@@ -158,10 +156,10 @@ async def get_ticker_data():
     valid_results = await asyncio.to_thread(_fetch_bulk)
     
     if valid_results:
-        _ticker_cache["data"] = valid_results
-        _ticker_cache["last_updated"] = now
+        await CacheService.set_json(CACHE_KEY_TICKER, valid_results, expiration=CACHE_TTL_SECONDS)
+        return valid_results
     
-    return _ticker_cache["data"]
+    return []
 
 @router.get("/universe")
 async def get_universe():

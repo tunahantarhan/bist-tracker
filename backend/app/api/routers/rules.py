@@ -1,5 +1,6 @@
 import asyncio
 import time
+import math
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.models.rule import Rule
 from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
 from app.providers.yfinance_provider import YFinanceProvider
 from app.services.rule_engine import RuleEngine
+from app.services.cache_service import CacheService
 from app.api.routers.market import TICKER_INFO
 from app.models.universe import UniverseStock
 
@@ -35,19 +37,38 @@ LINE_COLORS = [
     "#f43f5e", # Rose (Bollinger Lower/Upper)
 ]
 
-# Cache for full universe scanner overview (refreshes every 45 seconds or when rules change)
+OVERVIEW_CACHE_KEY = "bist_market_overview_v1"
+
+# Concurrency locks and single-flight guards
+_overview_lock = asyncio.Lock()
 _overview_cache = {
     "timestamp": 0.0,
     "data": None,
 }
 
 
-def invalidate_overview_cache():
+def sanitize_for_json(obj: Any) -> Any:
+    """Recursively replaces NaN and Infinity with None to guarantee strict JSON compliance."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif pd.isna(obj):
+        return None
+    return obj
+
+
+async def invalidate_overview_cache():
+    """Invalidates both local memory and Redis cache when rules or universe change."""
     _overview_cache["timestamp"] = 0.0
     _overview_cache["data"] = None
+    await CacheService.delete_key(OVERVIEW_CACHE_KEY)
 
 
-# Rule Update Model for PUT requests (structure of data coming from the frontend)
 class RulePutUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -78,7 +99,7 @@ async def create_rule(rule_in: RuleCreate, db: AsyncSession = Depends(get_db)):
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
-    invalidate_overview_cache()
+    await invalidate_overview_cache()
     return rule
 
 
@@ -95,11 +116,10 @@ async def patch_rule(rule_id: int, rule_in: RuleUpdate, db: AsyncSession = Depen
 
     await db.commit()
     await db.refresh(rule)
-    invalidate_overview_cache()
+    await invalidate_overview_cache()
     return rule
 
 
-# New endpoint for updating a rule using PUT method
 @router.put("/rules/{rule_id}", response_model=RuleResponse)
 async def update_rule(rule_id: int, rule_update: RulePutUpdate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Rule).where(Rule.id == rule_id))
@@ -113,7 +133,7 @@ async def update_rule(rule_id: int, rule_update: RulePutUpdate, db: AsyncSession
 
     await db.commit()
     await db.refresh(db_rule)
-    invalidate_overview_cache()
+    await invalidate_overview_cache()
     return db_rule
 
 
@@ -126,7 +146,7 @@ async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
 
     await db.delete(rule)
     await db.commit()
-    invalidate_overview_cache()
+    await invalidate_overview_cache()
     return {"detail": "Rule deleted successfully"}
 
 
@@ -143,7 +163,7 @@ async def seed_consultant_default_rules(db: AsyncSession = Depends(get_db)):
             "condition": ">",
             "target_type": "indicator",
             "indicator_2": "RSI_TRENDLINE",
-            "indicator_2_params": {"length": 14, "lookback": 60, "min_peak": 55.0, "max_trend_end": 40.0},
+            "indicator_2_params": {"length": 14, "lookback": 60, "min_peak": 55.0, "max_trend_end": 30.0},
             "score_impact": 25.0,
             "is_active": True,
         },
@@ -257,101 +277,121 @@ async def seed_consultant_default_rules(db: AsyncSession = Depends(get_db)):
     for r in created_rules:
         await db.refresh(r)
 
-    invalidate_overview_cache()
+    await invalidate_overview_cache()
     return created_rules
 
 
 @router.get("/market/overview")
 async def get_market_overview(db: AsyncSession = Depends(get_db)):
     """
-    Scans the entire active BIST universe in the background on load.
+    Scans the entire active BIST universe with Redis caching and single-flight lock protection.
     """
+    # 1. Fast Redis Cache Check (< 2ms)
+    cached_payload = await CacheService.get_json(OVERVIEW_CACHE_KEY)
+    if cached_payload:
+        return cached_payload
+
+    # 2. Local memory fallback check (< 1ms)
     now = time.time()
     if _overview_cache["data"] is not None and (now - _overview_cache["timestamp"]) < 45.0:
         return _overview_cache["data"]
 
-    active_rules_res = await db.execute(
-        select(Rule).where(Rule.is_active == True).order_by(Rule.is_primary_filter.desc(), Rule.id.asc())
-    )
-    active_rules = list(active_rules_res.scalars().all())
-    required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
-    if not required_tfs:
-        required_tfs = {"4h"}
-        
-    # Force 1d fetch for accurate global daily change calculation
-    required_tfs.add("1d")
+    # 3. Single-flight lock: Only one task computes overview, all others wait and consume the result
+    async with _overview_lock:
+        # Check again inside lock in case another worker just finished it
+        cached_again = await CacheService.get_json(OVERVIEW_CACHE_KEY)
+        if cached_again:
+            return cached_again
 
-    active_stocks_res = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
-    symbols = [s.symbol for s in active_stocks_res.scalars().all()]
-    if not symbols:
-        symbols = ["THYAO", "AKBNK", "KCHOL", "TUPRS", "GARAN"] # Fallback
+        if _overview_cache["data"] is not None and (time.time() - _overview_cache["timestamp"]) < 45.0:
+            return _overview_cache["data"]
 
-    async def _evaluate_single_symbol(sym: str):
-        try:
-            dfs_by_tf = {}
-            for tf in required_tfs:
-                df = await provider.fetch_historical_data(symbol=sym, interval=tf)
-                if not df.empty:
-                    dfs_by_tf[tf] = df
+        active_rules_res = await db.execute(
+            select(Rule).where(Rule.is_active == True).order_by(Rule.is_primary_filter.desc(), Rule.id.asc())
+        )
+        active_rules = list(active_rules_res.scalars().all())
+        required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
+        if not required_tfs:
+            required_tfs = {"4h"}
+        required_tfs.add("1d")
 
-            default_df = dfs_by_tf.get("4h")
-            if default_df is None or default_df.empty:
-                default_df = next(iter(dfs_by_tf.values()), pd.DataFrame())
+        active_stocks_res = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
+        symbols = [s.symbol for s in active_stocks_res.scalars().all()]
+        if not symbols:
+            symbols = ["THYAO", "AKBNK", "KCHOL", "TUPRS", "GARAN"]
 
-            if default_df.empty:
-                return None
+        # Limit concurrent network requests to Yahoo Finance (Max 6 parallel requests)
+        semaphore = asyncio.Semaphore(6)
 
-            # Real-time Price instead of Candle Graph Close
-            price_info = await provider.fetch_current_price(sym)
-            last_close = price_info.get("current_price", 0.0)
-            change_pct = price_info.get("change_pct", 0.0)
+        async def _evaluate_single_symbol(sym: str):
+            async with semaphore:
+                try:
+                    dfs_by_tf = {}
+                    for tf in required_tfs:
+                        df = await provider.fetch_historical_data(symbol=sym, interval=tf)
+                        if df is not None and not df.empty:
+                            dfs_by_tf[tf] = df.dropna(subset=["Close"])
 
-            eval_res = {
-                "total_score": 0.0,
-                "primary_filter_passed": False,
-                "has_primary_filter": False,
-            }
-            if active_rules:
-                eval_res = RuleEngine.evaluate_symbol(default_df, active_rules, dataframes_by_tf=dfs_by_tf)
+                    default_df = dfs_by_tf.get("4h")
+                    if default_df is None or default_df.empty:
+                        default_df = next(iter(dfs_by_tf.values()), pd.DataFrame())
 
-            return {
-                "symbol": sym,
-                "name": TICKER_INFO.get(sym, sym),
-                "current_price": last_close,
-                "change_pct": change_pct,
-                "score": eval_res["total_score"],
-                "primary_filter_passed": eval_res["primary_filter_passed"],
-                "has_primary_filter": eval_res["has_primary_filter"],
-            }
-        except Exception as e:
-            print(f"Overview scan skipped for {sym}: {e}")
-            return None
+                    if default_df.empty or len(default_df) < 2:
+                        return None
 
-    results = await asyncio.gather(*[_evaluate_single_symbol(s) for s in symbols])
-    valid_items = [r for r in results if r is not None]
+                    # Extract price directly from candles without firing extra HTTP calls
+                    daily_df = dfs_by_tf.get("1d", default_df)
+                    closes = daily_df["Close"].astype(float).tolist()
+                    last_close = round(closes[-1], 2)
+                    prev_close = round(closes[-2], 2) if len(closes) > 1 else last_close
+                    change_pct = round(((last_close - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
-    # 1. Stocks that passed the Primary RSI Filter (sorted by score descending)
-    rsi_passed = sorted(
-        [item for item in valid_items if item["primary_filter_passed"]],
-        key=lambda x: x["score"],
-        reverse=True,
-    )
+                    eval_res = {
+                        "total_score": 0.0,
+                        "primary_filter_passed": False,
+                        "has_primary_filter": False,
+                    }
+                    if active_rules:
+                        eval_res = RuleEngine.evaluate_symbol(default_df, active_rules, dataframes_by_tf=dfs_by_tf)
 
-    # 2. Top 10 Highest Scored Stocks
-    top_scored = sorted(valid_items, key=lambda x: (x["score"], x["change_pct"]), reverse=True)[:10]
+                    return {
+                        "symbol": sym,
+                        "name": TICKER_INFO.get(sym, sym),
+                        "current_price": last_close,
+                        "change_pct": change_pct,
+                        "score": eval_res["total_score"],
+                        "primary_filter_passed": eval_res["primary_filter_passed"],
+                        "has_primary_filter": eval_res["has_primary_filter"],
+                    }
+                except Exception as e:
+                    print(f"Overview scan skipped for {sym}: {e}")
+                    return None
 
-    # 3. Top 10 Highest Priced / Valued Stocks
-    top_priced = sorted(valid_items, key=lambda x: x["current_price"], reverse=True)[:10]
+        results = await asyncio.gather(*[_evaluate_single_symbol(s) for s in symbols])
+        valid_items = [r for r in results if r is not None]
 
-    payload = {
-        "items": valid_items,
-        "rsi_passed": rsi_passed,
-        "top_scored": top_scored,
-        "top_priced": top_priced,
-    }
-    _overview_cache["timestamp"] = time.time()
-    _overview_cache["data"] = payload
-    return payload
+        rsi_passed = sorted(
+            [item for item in valid_items if item["primary_filter_passed"]],
+            key=lambda x: x["score"],
+            reverse=True,
+        )
+        top_scored = sorted(valid_items, key=lambda x: (x["score"], x["change_pct"]), reverse=True)[:10]
+        top_priced = sorted(valid_items, key=lambda x: x["current_price"], reverse=True)[:10]
+
+        payload = {
+            "items": valid_items,
+            "rsi_passed": rsi_passed,
+            "top_scored": top_scored,
+            "top_priced": top_priced,
+        }
+
+        sanitized_payload = sanitize_for_json(payload)
+
+        _overview_cache["timestamp"] = time.time()
+        _overview_cache["data"] = sanitized_payload
+        await CacheService.set_json(OVERVIEW_CACHE_KEY, sanitized_payload, expiration=CacheService.OVERVIEW_EXPIRATION)
+
+        return sanitized_payload
 
 
 @router.get("/market/{symbol}")
@@ -361,9 +401,17 @@ async def get_market_data(
     interval: str = "4h",
     db: AsyncSession = Depends(get_db),
 ):
+    clean_sym = symbol.upper()
+    cache_key = f"bist_market_stock_{clean_sym}_{interval}_{period or 'default'}"
+
+    # 1. Fast Redis Cache Hit (< 2ms)
+    cached_stock = await CacheService.get_json(cache_key)
+    if cached_stock:
+        return cached_stock
+
     try:
         chart_task = asyncio.create_task(
-            provider.fetch_historical_data(symbol=symbol, period=period, interval=interval)
+            provider.fetch_historical_data(symbol=clean_sym, period=period, interval=interval)
         )
         rules_task = asyncio.create_task(
             db.execute(select(Rule).where(Rule.is_active == True).order_by(Rule.is_primary_filter.desc(), Rule.id.asc()))
@@ -373,6 +421,10 @@ async def get_market_data(
 
         if chart_df.empty:
             raise HTTPException(status_code=404, detail="Hisse verisi bulunamadı")
+
+        chart_df = chart_df.dropna(subset=["Open", "High", "Low", "Close"])
+        if chart_df.empty:
+            raise HTTPException(status_code=404, detail="Geçerli mum verisi bulunamadı")
 
         active_rules = list(active_rules_res.scalars().all())
 
@@ -385,9 +437,9 @@ async def get_market_data(
         highs = df_reset["High"].astype(float).round(2).tolist()
         lows = df_reset["Low"].astype(float).round(2).tolist()
 
-        last_close = closes[-1]
+        last_close = closes[-1] if closes else 0.0
         prev_close = closes[-2] if len(closes) > 1 else last_close
-        change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
+        change_pct = round(((last_close - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
         candles = [
             {"time": t, "open": o, "high": h, "low": l, "close": c}
@@ -395,7 +447,6 @@ async def get_market_data(
         ]
 
         required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
-        # Force 1d fetch for accurate top-level change_pct regardless of the selected chart interval
         required_tfs.add("1d")
         
         dataframes_by_tf = {interval: chart_df}
@@ -403,24 +454,21 @@ async def get_market_data(
 
         if missing_tfs:
             fetched_dfs = await asyncio.gather(
-                *[provider.fetch_historical_data(symbol=symbol, interval=tf) for tf in missing_tfs],
+                *[provider.fetch_historical_data(symbol=clean_sym, interval=tf) for tf in missing_tfs],
                 return_exceptions=True,
             )
             for tf, res_df in zip(missing_tfs, fetched_dfs):
                 if isinstance(res_df, pd.DataFrame) and not res_df.empty:
-                    dataframes_by_tf[tf] = res_df
+                    dataframes_by_tf[tf] = res_df.dropna(subset=["Close"])
 
-        # Calculate absolute price and change_pct from the 1d timeframe exclusively
         daily_df = dataframes_by_tf.get("1d")
         if daily_df is not None and not daily_df.empty:
-            daily_closes = daily_df["Close"].astype(float).round(2).tolist()
-            last_close = daily_closes[-1]
-            prev_close = daily_closes[-2] if len(daily_closes) > 1 else last_close
-        else:
-            last_close = closes[-1]
-            prev_close = closes[-2] if len(closes) > 1 else last_close
-            
-        change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
+            daily_closes = daily_df["Close"].astype(float).round(2).dropna().tolist()
+            if daily_closes:
+                last_close = daily_closes[-1]
+                prev_close = daily_closes[-2] if len(daily_closes) > 1 else last_close
+                if prev_close > 0:
+                    change_pct = round(((last_close - prev_close) / prev_close) * 100, 2)
 
         evaluation = {
             "total_score": 0.0,
@@ -459,7 +507,7 @@ async def get_market_data(
                             line_data = [
                                 {"time": t, "value": round(float(v), 2)}
                                 for t, v in zip(time_strings, vals)
-                                if pd.notna(v)
+                                if pd.notna(v) and not math.isinf(v)
                             ]
                             label = f"{ind_name.upper()} ({length_val})" if length_val else ind_name.upper()
                             indicator_overlays.append({
@@ -471,35 +519,42 @@ async def get_market_data(
                     except Exception as ind_err:
                         print(f"Overlay calculation skipped for {key}: {ind_err}")
 
+        # Extract RSI parameters directly from the active primary rule in database
+        primary_rule = next((r for r in active_rules if getattr(r, "is_primary_filter", False)), None)
+        trend_params = {"length": 14, "lookback": 60, "min_peak": 55.0, "max_trend_end": 30.0}
+        if primary_rule and primary_rule.indicator_2_params:
+            trend_params.update(primary_rule.indicator_2_params)
+
         rsi_pane = {"rsi": [], "trendline": [], "slope": None, "peak_rsi": None}
         try:
-            rsi_series = RuleEngine.get_indicator_series(chart_df, "RSI", {"length": 14})
+            rsi_length = int(trend_params.get("length", 14))
+            rsi_series = RuleEngine.get_indicator_series(chart_df, "RSI", {"length": rsi_length})
             trend_series, trend_meta = RuleEngine.calculate_rsi_downtrend_series(
-                df_reset["Close"].astype(float), {"length": 14, "lookback": 60}
+                df_reset["Close"].astype(float), trend_params
             )
-            r_vals = rsi_series.tolist()
-            tr_vals = trend_series.tolist()
+            r_vals = rsi_series.tolist() if rsi_series is not None else []
+            tr_vals = trend_series.tolist() if trend_series is not None else []
 
             rsi_pane["rsi"] = [
                 {"time": t, "value": round(float(v), 2)}
                 for t, v in zip(time_strings, r_vals)
-                if pd.notna(v)
+                if pd.notna(v) and not math.isinf(v)
             ]
             rsi_pane["trendline"] = [
                 {"time": t, "value": round(float(v), 2)}
                 for t, v in zip(time_strings, tr_vals)
-                if pd.notna(v)
+                if pd.notna(v) and not math.isinf(v)
             ]
             rsi_pane["slope"] = trend_meta.get("slope")
             rsi_pane["peak_rsi"] = trend_meta.get("peak_rsi")
         except Exception as rsi_err:
             print(f"RSI sub-pane calculation skipped: {rsi_err}")
 
-        return {
-            "symbol": symbol.upper(),
+        response_data = {
+            "symbol": clean_sym,
             "interval": interval,
-            "current_price": round(last_close, 2),
-            "change_pct": change_pct,
+            "current_price": round(last_close, 2) if pd.notna(last_close) else 0.0,
+            "change_pct": change_pct if pd.notna(change_pct) else 0.0,
             "candles": candles,
             "score": evaluation["total_score"],
             "primary_filter_passed": evaluation["primary_filter_passed"],
@@ -508,17 +563,21 @@ async def get_market_data(
             "indicators": indicator_overlays,
             "rsi_pane": rsi_pane,
         }
+
+        safe_response = sanitize_for_json(response_data)
+        await CacheService.set_json(cache_key, safe_response, expiration=CacheService.MARKET_EXPIRATION)
+        return safe_response
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+
 @router.get("/market/universe/active")
 async def get_active_universe(db: AsyncSession = Depends(get_db)):
-    """Brings the active BIST universe selected from the admin panel."""
     result = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
     stocks = result.scalars().all()
-    # If the database is empty, return the default list
     if not stocks:
         default_symbols = ["THYAO", "AKBNK", "KCHOL", "TUPRS", "GARAN"]
         for sym in default_symbols:
@@ -527,16 +586,14 @@ async def get_active_universe(db: AsyncSession = Depends(get_db)):
         return default_symbols
     return [s.symbol for s in stocks]
 
+
 @router.post("/market/universe/update")
 async def update_universe(symbols: list[str], db: AsyncSession = Depends(get_db)):
-    """Saves the new stock universe which comes from the admin panel. """
-    # Passify all existing stocks 
     await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
     all_stocks_res = await db.execute(select(UniverseStock))
     for stock in all_stocks_res.scalars().all():
         stock.is_active = False
     
-    # Activate the new stocks or add them if they don't exist 
     for sym in symbols:
         result = await db.execute(select(UniverseStock).where(UniverseStock.symbol == sym))
         stock = result.scalar_one_or_none()
@@ -546,5 +603,5 @@ async def update_universe(symbols: list[str], db: AsyncSession = Depends(get_db)
             db.add(UniverseStock(symbol=sym, is_active=True))
             
     await db.commit()
-    invalidate_overview_cache()
+    await invalidate_overview_cache()
     return {"status": "success", "active_count": len(symbols)}

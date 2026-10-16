@@ -22,7 +22,6 @@ INTRADAY_MAX_PERIODS = {
     "4h": {"1mo", "3mo", "6mo", "1y", "2y"},
 }
 
-# Days mapping for instant in-memory slicing without hitting Yahoo Finance again
 PERIOD_TO_DAYS = {
     "5d": 5,
     "1mo": 31,
@@ -33,12 +32,10 @@ PERIOD_TO_DAYS = {
     "5y": 1826,
 }
 
-# Master cache stores the largest fetched period per (symbol, base_interval)
 _master_cache: Dict[str, Tuple[float, int, pd.DataFrame]] = {}
 _price_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_CACHE_TTL = 180.0  # 3 minutes cache for instant UI switching
+_CACHE_TTL = 180.0
 
-# Per-symbol locks + Semaphore(4) instead of a single global blocking lock
 _symbol_locks: Dict[str, asyncio.Lock] = {}
 _yf_semaphore = asyncio.Semaphore(16)
 
@@ -95,12 +92,9 @@ class YFinanceProvider(BaseDataProvider):
                 else:
                     requested_period = DEFAULT_PERIOD_BY_INTERVAL[effective_interval]
 
-        # Both 1h and 4h share the same base '1h' data from Yahoo Finance!
         yf_interval = "1h" if effective_interval == "4h" else effective_interval
         req_days = PERIOD_TO_DAYS.get(requested_period, 366)
 
-        # Always fetch at least 6mo for 1h/4h and 1y for 1d so sub-periods (1A, 3A, 6A) slice instantly from RAM
-        # Always fetch at least 1y for 1h/4h and 2y for 1d so MA(100) and MA(200) always have >= 200 bars!
         fetch_period = requested_period
         if yf_interval == "1h" and req_days < 366:
             fetch_period = "1y"
@@ -111,22 +105,27 @@ class YFinanceProvider(BaseDataProvider):
         master_key = f"{formatted_symbol}_{yf_interval}"
         now = time.time()
 
-        # 1. Fast path: Serve directly from RAM if cached dataset covers the requested period
+        # Helper: resample to 4h BEFORE slicing so candle boundaries never shift
+        def _prepare_response(raw_df: pd.DataFrame) -> pd.DataFrame:
+            if effective_interval == "4h":
+                resampled = self._resample_4h(raw_df)
+                return self._slice_by_period(resampled, requested_period)
+            return self._slice_by_period(raw_df, requested_period)
+
+        # 1. Fast path: Serve directly from RAM
         if master_key in _master_cache:
             cached_time, cached_days, cached_df = _master_cache[master_key]
             if now - cached_time < _CACHE_TTL and cached_days >= req_days and not cached_df.empty:
-                base_df = self._slice_by_period(cached_df, requested_period)
-                return self._resample_4h(base_df) if effective_interval == "4h" else base_df.copy()
+                return _prepare_response(cached_df)
 
-        # 2. Network path: Lock only per-symbol so other requests run concurrently
+        # 2. Network path
         sym_lock = _get_symbol_lock(master_key)
         async with sym_lock:
             now = time.time()
             if master_key in _master_cache:
                 cached_time, cached_days, cached_df = _master_cache[master_key]
                 if now - cached_time < _CACHE_TTL and cached_days >= req_days and not cached_df.empty:
-                    base_df = self._slice_by_period(cached_df, requested_period)
-                    return self._resample_4h(base_df) if effective_interval == "4h" else base_df.copy()
+                    return _prepare_response(cached_df)
 
             def _fetch():
                 ticker = yf.Ticker(formatted_symbol)
@@ -139,8 +138,7 @@ class YFinanceProvider(BaseDataProvider):
                 return pd.DataFrame()
 
             _master_cache[master_key] = (time.time(), fetch_days, df.copy())
-            base_df = self._slice_by_period(df, requested_period)
-            return self._resample_4h(base_df) if effective_interval == "4h" else base_df.copy()
+            return _prepare_response(df)
 
     async def fetch_current_price(self, symbol: str) -> Dict[str, Any]:
         formatted_symbol = self._format_symbol(symbol)
