@@ -143,6 +143,12 @@ async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
+    
+    if rule.is_primary_filter:
+        raise HTTPException(
+            status_code=400,
+            detail="Ana RSI Filtresi sistemin çekirdeğidir ve silinemez. Yalnızca pasife alabilir veya parametrelerini düzenleyebilirsiniz."
+        )
 
     await db.delete(rule)
     await db.commit()

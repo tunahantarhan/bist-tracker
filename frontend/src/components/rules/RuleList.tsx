@@ -1,7 +1,7 @@
 'use client';
 
 import { Rule } from '@/types';
-import { Trash2, Filter, Clock, Pencil, CheckSquare, Square, Check } from 'lucide-react';
+import { Trash2, Sliders, Clock, Pencil, CheckSquare, Square, Check } from 'lucide-react';
 
 interface RuleListProps {
   rules: Rule[];
@@ -31,6 +31,11 @@ export default function RuleList({
   onToggleRule,
 }: RuleListProps) {
   
+  // Calculate total active scoring weight
+  const totalScorePotential = rules
+    .filter((r) => r.is_active)
+    .reduce((sum, r) => sum + (Number(r.score_impact) || 0), 0);
+
   const handleSelectAll = () => {
     if (!onSelectRules) return;
     if (selectedRules.length === rules.length) {
@@ -51,7 +56,7 @@ export default function RuleList({
 
   const handleDeleteSelected = () => {
     if (selectedRules.length === 0) return;
-    if (window.confirm(`${selectedRules.length} adet kuralı silmek istediğinize emin misiniz?`)) {
+    if (window.confirm(`${selectedRules.length} adet puanlama kuralını silmek istediğinize emin misiniz?`)) {
       if (onDeleteMultiple) {
         onDeleteMultiple(selectedRules);
       } else if (onDeleteRule) {
@@ -66,18 +71,23 @@ export default function RuleList({
       <div className="border-b border-slate-800 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-[#161b26] to-[#12161f]">
         <div className="flex items-center space-x-3">
           <div className="h-8 w-8 rounded-lg bg-blue-600/15 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
-            <Filter className="h-4 w-4" />
+            <Sliders className="h-4 w-4" />
           </div>
-          <h2 className="text-sm font-bold tracking-wider text-slate-200 uppercase truncate">
-            Aktif Kurallar
-          </h2>
-          <span className="rounded-full bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 text-xs font-mono font-semibold text-blue-400 shrink-0">
+          <div>
+            <h2 className="text-sm font-bold tracking-wider text-slate-200 uppercase truncate">
+              Dinamik Puanlama Kuralları
+            </h2>
+            <span className="text-[10px] text-slate-500 font-mono">
+              Aktif Ağırlık: <strong className="text-blue-400">+{totalScorePotential.toFixed(2)} Puan</strong>
+            </span>
+          </div>
+          <span className="rounded-full bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-xs font-mono font-semibold text-blue-400 shrink-0">
             {rules.length}
           </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {onSelectRules && (
+          {onSelectRules && rules.length > 0 && (
             <button 
               type="button"
               onClick={handleSelectAll} 
@@ -109,11 +119,11 @@ export default function RuleList({
         </div>
       </div>
 
-      <div className="divide-y divide-slate-800/60 font-sans text-sm max-h-[620px] overflow-y-auto scrollbar-hide p-2 space-y-2">
+      <div className="divide-y divide-slate-800/60 font-sans text-sm max-h-[520px] overflow-y-auto scrollbar-hide p-2 space-y-2">
         {rules.length === 0 ? (
-          <div className="py-16 flex flex-col items-center justify-center text-slate-500 space-y-2">
-            <Filter className="h-8 w-8 opacity-25" />
-            <p className="text-center px-4 text-xs">Henüz tanımlanmış algoritmik kural bulunmuyor.</p>
+          <div className="py-12 flex flex-col items-center justify-center text-slate-500 space-y-2">
+            <Sliders className="h-7 w-7 opacity-25" />
+            <p className="text-center px-4 text-xs">Tanımlanmış ek puanlama kuralı bulunmuyor.</p>
           </div>
         ) : (
           rules.map((rule) => {
@@ -121,8 +131,6 @@ export default function RuleList({
             const targetText =
               rule.target_type === 'static'
                 ? rule.static_value
-                : rule.indicator_2 === 'RSI_TRENDLINE'
-                ? 'RSI Düşen Trend (Mavi Çizgi)'
                 : `${rule.indicator_2} ${rule.indicator_2_params?.length ? `(${rule.indicator_2_params.length})` : ''}`;
             
             const isSelected = rule.id !== undefined && selectedRules.includes(rule.id);
@@ -152,7 +160,7 @@ export default function RuleList({
                     </div>
                   )}
 
-                  {/* IOS Styled Active / Inactive Toggle */}
+                  {/* Active / Inactive Toggle */}
                   <div className="pt-0.5 shrink-0">
                     <button
                       type="button"
@@ -181,16 +189,9 @@ export default function RuleList({
                         <span>{tfLabel}</span>
                       </span>
 
-                      {rule.is_primary_filter ? (
-                        <span className="inline-flex items-center space-x-1 rounded bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-amber-300 shrink-0">
-                          <Filter className="h-2.5 w-2.5" />
-                          <span>ANA FİLTRE</span>
-                        </span>
-                      ) : (
-                        <span className="rounded bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-[10px] font-mono font-bold text-blue-300 shrink-0">
-                          +{Number(rule.score_impact).toFixed(2)} Puan
-                        </span>
-                      )}
+                      <span className="rounded bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-[10px] font-mono font-bold text-blue-300 shrink-0">
+                        +{Number(rule.score_impact).toFixed(2)} Puan
+                      </span>
                     </div>
 
                     <p className="text-[11px] text-slate-400 font-mono flex flex-wrap items-center gap-1 bg-slate-900/60 px-2 py-1 rounded border border-slate-800/60 w-fit">
@@ -216,7 +217,7 @@ export default function RuleList({
                     <button
                       type="button"
                       onClick={() => {
-                        if (window.confirm('Bu kuralı silmek istediğinize emin misiniz?')) {
+                        if (window.confirm('Bu puanlama kuralını silmek istediğinize emin misiniz?')) {
                           onDeleteRule(rule.id!);
                         }
                       }}

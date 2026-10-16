@@ -108,7 +108,8 @@ export default function DashboardPage() {
   // Dedicated DOM reference to scroll directly to the chart container
   const chartSectionRef = useRef<HTMLDivElement>(null);
 
-  const chartCacheRef = useRef<Record<string, { candles: any[]; indicators?: any[]; rsi_pane?: any }>>({});
+  // In-memory client-side cache for charts & market data (symbol + interval + period -> payload)
+  const chartCacheRef = useRef<Record<string, { candles: any[]; indicators?: any[]; rsi_pane?: any; marketData?: MarketData }>>({});
 
   useEffect(() => {
     selectedSymbolRef.current = selectedSymbol;
@@ -155,12 +156,11 @@ export default function DashboardPage() {
   
   const [liveTickerData, setLiveTickerData] = useState<TickerItem[]>([]);
 
-  const prevScoreRef = useRef<number | null>(null);
-  const prevScoreSymbolRef = useRef<string | null>(null);
+  // Dedicated references to prevent false flash animations on symbol/timeframe switch
+  const lastRenderedScoreRef = useRef<{ symbol: string; score: number } | null>(null);
   const [scoreFlash, setScoreFlash] = useState<'up' | 'down' | null>(null);
 
-  const prevPriceRef = useRef<number | null>(null);
-  const prevPriceSymbolRef = useRef<string | null>(null);
+  const lastRenderedPriceRef = useRef<{ symbol: string; price: number } | null>(null);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
 
   const [bistTime, setBistTime] = useState<string>('--:--:--');
@@ -201,6 +201,8 @@ export default function DashboardPage() {
 
   // Select stock and smoothly scroll to chart section across both desktop and mobile
   const handleSelectStockWithScroll = (symbol: string) => {
+    setPriceFlash(null);
+    setScoreFlash(null);
     setSelectedSymbol(symbol);
     if (chartSectionRef.current) {
       chartSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -234,7 +236,14 @@ export default function DashboardPage() {
 
     // 1. If cached data exists and it's not a background refresh, render immediately (0ms)
     if (cachedData && !isBackground) {
-      setChartData(cachedData);
+      setChartData({
+        candles: cachedData.candles,
+        indicators: cachedData.indicators || [],
+        rsi_pane: cachedData.rsi_pane,
+      });
+      if (cachedData.marketData) {
+        setMarketData(cachedData.marketData);
+      }
       setLoadingMarket(false);
     } else if (!isBackground) {
       setLoadingMarket(true);
@@ -248,6 +257,7 @@ export default function DashboardPage() {
         candles: data.candles,
         indicators: data.indicators || [],
         rsi_pane: data.rsi_pane,
+        marketData: data,
       };
 
       // 2. Save fresh data to client cache
@@ -255,7 +265,11 @@ export default function DashboardPage() {
 
       // 3. Update chart state if it was a user click or if cache was empty
       if (!isBackground || !cachedData) {
-        setChartData(newChartPayload);
+        setChartData({
+          candles: data.candles,
+          indicators: data.indicators || [],
+          rsi_pane: data.rsi_pane,
+        });
       }
       
       if (data.score !== undefined) {
@@ -435,6 +449,8 @@ export default function DashboardPage() {
   };
 
   const handleIntervalChange = (newInterval: string) => {
+    setPriceFlash(null);
+    setScoreFlash(null);
     setChartConfig((prev) => {
       let nextPeriod = prev.period;
       if (newInterval === '5m' || newInterval === '15m') nextPeriod = '1mo';
@@ -444,6 +460,8 @@ export default function DashboardPage() {
   };
 
   const handlePeriodChange = (newPeriod: string) => {
+    setPriceFlash(null);
+    setScoreFlash(null);
     setChartConfig((prev) => {
       let nextInterval = prev.interval;
       if (newPeriod === '5y' && prev.interval !== '1d') nextInterval = '1d';
@@ -452,54 +470,65 @@ export default function DashboardPage() {
     });
   };
 
-  const currentScore = marketData?.score ?? (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
+  // Safe score evaluation: strictly ensure marketData belongs to selectedSymbol
+  const currentScore = (marketData && marketData.symbol === selectedSymbol && marketData.score !== undefined)
+    ? marketData.score
+    : (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
 
-  // Score flash animation
+  // Score flash animation: only triggers when live score updates for the exact SAME active stock
   useEffect(() => {
-    if (!selectedSymbol) return;
-
-    if (prevScoreSymbolRef.current !== selectedSymbol) {
-      prevScoreSymbolRef.current = selectedSymbol;
-      prevScoreRef.current = currentScore;
+    if (!selectedSymbol) {
       setScoreFlash(null);
       return;
     }
 
-    if (prevScoreRef.current !== null && currentScore !== prevScoreRef.current) {
-      setScoreFlash(currentScore > prevScoreRef.current ? 'up' : 'down');
+    // Reset reference without flashing when switching to a different stock
+    if (!lastRenderedScoreRef.current || lastRenderedScoreRef.current.symbol !== selectedSymbol) {
+      lastRenderedScoreRef.current = { symbol: selectedSymbol, score: currentScore };
+      setScoreFlash(null);
+      return;
+    }
+
+    // Trigger flash only if the score changed for the same stock
+    if (lastRenderedScoreRef.current.symbol === selectedSymbol && lastRenderedScoreRef.current.score !== currentScore) {
+      const direction = currentScore > lastRenderedScoreRef.current.score ? 'up' : 'down';
+      setScoreFlash(direction);
+      lastRenderedScoreRef.current = { symbol: selectedSymbol, score: currentScore };
       const timer = setTimeout(() => setScoreFlash(null), 1000);
-      prevScoreRef.current = currentScore;
       return () => clearTimeout(timer);
     }
-    prevScoreRef.current = currentScore;
   }, [selectedSymbol, currentScore]);
 
-  // Price flash animation
+  // Price flash animation: only triggers when live price updates for the exact SAME active stock
   useEffect(() => {
-    if (!marketData || marketData.current_price === undefined) return;
-
-    const currentSymbol = marketData.symbol;
-    const currentPrice = marketData.current_price;
-
-    if (prevPriceSymbolRef.current !== currentSymbol) {
-      prevPriceSymbolRef.current = currentSymbol;
-      prevPriceRef.current = currentPrice;
+    if (!marketData || marketData.symbol !== selectedSymbol || marketData.current_price === undefined) {
       setPriceFlash(null);
       return;
     }
 
-    if (prevPriceRef.current !== null && currentPrice !== prevPriceRef.current) {
-      setPriceFlash(currentPrice > prevPriceRef.current ? 'up' : 'down');
+    const sym = marketData.symbol;
+    const price = marketData.current_price;
+
+    // Reset reference without flashing when switching to a different stock
+    if (!lastRenderedPriceRef.current || lastRenderedPriceRef.current.symbol !== sym) {
+      lastRenderedPriceRef.current = { symbol: sym, price };
+      setPriceFlash(null);
+      return;
+    }
+
+    // Trigger flash only if the price changed for the same stock
+    if (lastRenderedPriceRef.current.symbol === sym && lastRenderedPriceRef.current.price !== price) {
+      const direction = price > lastRenderedPriceRef.current.price ? 'up' : 'down';
+      setPriceFlash(direction);
+      lastRenderedPriceRef.current = { symbol: sym, price };
       const timer = setTimeout(() => setPriceFlash(null), 1000);
-      prevPriceRef.current = currentPrice;
       return () => clearTimeout(timer);
     }
-    prevPriceRef.current = currentPrice;
-  }, [marketData?.symbol, marketData?.current_price]);
+  }, [selectedSymbol, marketData?.symbol, marketData?.current_price]);
 
   if (!isAuthenticated) return <div className="min-h-screen bg-[#0b0e14]" />;
 
-  const rulesList = marketData?.rules_breakdown || [];
+  const rulesList = (marketData && marketData.symbol === selectedSymbol) ? (marketData.rules_breakdown || []) : [];
   const rsiPassedList: StockOverviewItem[] = overview?.rsi_passed || [];
   const topScoredList: StockOverviewItem[] = overview?.top_scored || [];
   
@@ -823,7 +852,7 @@ export default function DashboardPage() {
                            <span className="text-[10px] font-mono text-slate-500 border border-slate-700 bg-slate-800/50 px-2 py-1 rounded">
                              {dynamicNames[selectedSymbol!] || selectedSymbol}
                            </span>
-                           {marketData?.has_primary_filter && (
+                           {marketData && marketData.symbol === selectedSymbol && marketData.has_primary_filter && (
                              <span className={`px-2 py-1 rounded border text-[10px] font-mono font-semibold flex items-center space-x-1 ${marketData.primary_filter_passed ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
                                <Filter className="h-3 w-3" />
                                <span>{marketData.primary_filter_passed ? 'FİLTRE OK' : 'FİLTRE BEKLENİYOR'}</span>
@@ -853,7 +882,7 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="flex flex-col justify-center bg-[#161b26]/50 border border-slate-800/80 rounded-2xl p-4 sm:p-5 w-full md:w-auto xl:min-w-[340px] md:self-start">
-                      {marketData && !loadingMarket ? (
+                      {marketData && marketData.symbol === selectedSymbol && !loadingMarket ? (
                         <div className="flex flex-col space-y-4">
                           
                           <div className={`flex items-start justify-between p-2 -mx-2 rounded-lg transition-colors duration-500 ${priceFlash === 'up' ? 'bg-emerald-500/20' : priceFlash === 'down' ? 'bg-rose-500/20' : 'bg-transparent'}`}>

@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   ShieldCheck, Settings, Users, LogOut, LayoutDashboard, LineChart,
-  ArrowRight, Sliders, Database, Search, RefreshCw, TrendingUp, TrendingDown, Filter, Calendar, X
+  ArrowRight, Sliders, Database, Search, RefreshCw, TrendingUp, TrendingDown, 
+  Filter, Calendar, X, Flame, Pencil, Sparkles, Check
 } from 'lucide-react';
 import RuleList from '@/components/rules/RuleList';
 import CreateRuleDialog from '@/components/rules/CreateRuleDialog';
@@ -56,7 +57,7 @@ export default function AdminDashboard() {
       bc.postMessage('RULES_UPDATED');
       bc.close();
     } catch (e) {
-      console.warn('BroadcastChannel desteklenmiyor:', e);
+      console.warn('BroadcastChannel unsupported:', e);
     }
   };
 
@@ -66,7 +67,7 @@ export default function AdminDashboard() {
       const data = await fetchRules();
       setRules(data);
     } catch (error) {
-      console.warn('Kurallar alınamadı:', error);
+      console.warn('Failed to load rules:', error);
     } finally {
       setLoading(false);
     }
@@ -78,7 +79,7 @@ export default function AdminDashboard() {
       setUniverse(data);
       setActiveUniverseTokens(data.map((d: any) => d.symbol));
     } catch (error) {
-      console.warn('Hisse evreni alınamadı:', error);
+      console.warn('Failed to load universe:', error);
     }
   };
 
@@ -108,7 +109,7 @@ export default function AdminDashboard() {
         const data = await fetchMarketData(previewSymbol, previewConfig.interval, previewConfig.period, controller.signal);
         setPreviewData(data);
       } catch (error: any) {
-        if (error?.name !== 'AbortError') console.warn('Önizleme verisi alınamadı:', error?.message);
+        if (error?.name !== 'AbortError') console.warn('Preview fetch warning:', error?.message);
       } finally {
         if (!controller.signal.aborted) setLoadingPreview(false);
       }
@@ -137,24 +138,37 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteRule = async (id: number) => {
+    const target = rules.find((r) => r.id === id);
+    if (target?.is_primary_filter) {
+      alert("Ana RSI Filtresi sistemin çekirdeğidir ve silinemez. Yalnızca pasife alabilir veya parametrelerini düzenleyebilirsiniz.");
+      return;
+    }
     try {
       await deleteRule(id);
       setRules((prev) => prev.filter((r) => r.id !== id));
       setSelectedRules((prev) => prev.filter((rId) => rId !== id));
       broadcastRuleUpdate();
     } catch (error) {
-      console.warn('Kural silinemedi:', error);
+      console.warn('Rule deletion failed:', error);
     }
   };
 
   const handleDeleteMultiple = async (ids: number[]) => {
+    // Filter out primary filter from batch deletion
+    const safeIds = ids.filter((id) => {
+      const r = rules.find((rule) => rule.id === id);
+      return !r?.is_primary_filter;
+    });
+
+    if (safeIds.length === 0) return;
+
     try {
-      await Promise.all(ids.map((id) => deleteRule(id)));
-      setRules((prev) => prev.filter((r) => r.id === undefined || !ids.includes(r.id)));
+      await Promise.all(safeIds.map((id) => deleteRule(id)));
+      setRules((prev) => prev.filter((r) => r.id === undefined || !safeIds.includes(r.id)));
       setSelectedRules([]);
       broadcastRuleUpdate();
     } catch (error) {
-      console.warn('Toplu silme hatası:', error);
+      console.warn('Batch deletion failed:', error);
     }
   };
 
@@ -166,7 +180,7 @@ export default function AdminDashboard() {
       setRules((prev) => prev.map((r) => (r.id === id ? { ...r, is_active: isActive } : r)));
       broadcastRuleUpdate();
     } catch (error) {
-      console.warn('Kural durumu değiştirilemedi:', error);
+      console.warn('Toggle status update failed:', error);
     }
   };
 
@@ -204,9 +218,13 @@ export default function AdminDashboard() {
 
   const selectedStockInfo = universe.find((u) => u.symbol === previewSymbol);
 
+  // Separate Primary Core Filter and Regular Scoring Rules
+  const primaryRule = rules.find((r) => r.is_primary_filter);
+  const scoringRules = rules.filter((r) => !r.is_primary_filter);
+
   const getHeaderInfo = () => {
     switch (activeTab) {
-      case 'rules': return { title: 'Kural Motoru Yönetimi & Canlı Simülasyon', subtitle: 'Çoklu zaman diliminde RSI ve hareketli ortalama kurallarını yönetin.' };
+      case 'rules': return { title: 'Kural Motoru Yönetimi & Canlı Simülasyon', subtitle: 'Ana kapı filtresini ve çoklu zaman dilimli ek skor kurallarını yönetin.' };
       case 'users': return { title: 'Kullanıcı Yönetimi', subtitle: 'Kayıtlı kullanıcıları ve abonelik paketlerini görüntüleyin.' };
       case 'settings': return { title: 'Sistem Ayarları & BIST Evreni', subtitle: 'BIST hisse evrenini ve tarama listesini yapılandırın.' };
       default: return { title: 'Yönetim Merkezi', subtitle: 'BIST Tracker sistem yönetimi ve algoritmik kontrol paneli.' };
@@ -225,7 +243,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-[100dvh] flex flex-col md:flex-row bg-[#0b0e14] text-slate-200 font-sans overflow-hidden">
       
-      {/* Mobile Responsive Sidebar */}
+      {/* Sidebar */}
       <aside className="w-full md:w-64 border-b md:border-b-0 md:border-r border-slate-800/80 bg-[#12161f] flex flex-col shrink-0 z-40">
         <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b border-slate-800/80 shrink-0">
           <div 
@@ -239,7 +257,6 @@ export default function AdminDashboard() {
               Admin Panel
             </span>
           </div>
-          {/* LogOut button that only seen on mobileview */}
           <button onClick={handleLogout} className="md:hidden p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg">
              <LogOut className="h-5 w-5" />
           </button>
@@ -297,7 +314,6 @@ export default function AdminDashboard() {
           </button>
         </nav>
 
-        {/* LogOut button that only seen on desktop view */}
         <div className="hidden md:block p-4 border-t border-slate-800/80 mt-auto">
           <button 
             type="button"
@@ -310,7 +326,7 @@ export default function AdminDashboard() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Main Container */}
       <main className="flex-1 flex flex-col overflow-hidden">
         <header className="h-auto md:h-16 py-3 md:py-0 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 border-b border-slate-800/80 bg-[#0b0e14]/80 backdrop-blur-md shrink-0 gap-3 md:gap-0">
           <div>
@@ -342,7 +358,7 @@ export default function AdminDashboard() {
                   Admin Paneline Hoş Geldiniz
                 </h2>
                 <p className="text-xs md:text-sm text-slate-400 mt-2 max-w-2xl leading-relaxed">
-                  Bu panel üzerinden BIST Tracker platformunun algoritmik skorlama kurallarını dinamik olarak yapılandırabilir, 
+                  Bu panel üzerinden BIST Tracker platformunun ana elek filtresini ve algoritmik skorlama kurallarını dinamik olarak yapılandırabilir, 
                   RSI düşen trend kırılımlarını ve hareketli ortalama kesişimlerini canlı grafiklerde test edebilirsiniz.
                 </p>
 
@@ -359,7 +375,7 @@ export default function AdminDashboard() {
                         Kural Motoru & İndikatörler
                       </h3>
                       <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                        4S RSI Düşen Trend Kırılımı, 5dk/15dk MA kesişimleri ve milimetrik puan ağırlıklarını yönetin.
+                        Ana RSI Filtresi, hareketli ortalamalar ve dinamik puanlama ağırlıklarını yönetin.
                       </p>
                     </div>
                     <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs font-medium text-blue-400">
@@ -416,14 +432,108 @@ export default function AdminDashboard() {
 
           {activeTab === 'rules' && (
             <div className="max-w-[1440px] mx-auto flex flex-col xl:flex-row gap-6 md:gap-8 items-start">
+              
+              {/* Left Column: Protected Core Filter Card + Scoring Rules List */}
               <div className="w-full xl:w-5/12 space-y-6 shrink-0">
+                
+                {/* 1. MASTER PROTECTED PRIMARY FILTER CARD */}
+                {primaryRule && (
+                  <div className="rounded-xl border border-amber-500/35 bg-gradient-to-b from-[#181d29] to-[#12161f] shadow-2xl p-4 sm:p-5 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+
+                    <div className="flex items-center justify-between border-b border-amber-500/20 pb-3.5 mb-3.5">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="h-7 w-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                          <Flame className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-[11px] font-bold tracking-wider text-amber-400 uppercase font-mono">
+                              Sistem Ana Kapı Filtresi
+                            </span>
+                            <span className="rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.2 text-[9px] font-mono font-semibold text-amber-300">
+                              Çekirdek Kural
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            Hisselerin bildirim tetiklemesi ve taranması için geçmesi gereken zorunlu ilk elek
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Active/Inactive Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => primaryRule.id && handleToggleRule(primaryRule.id, !primaryRule.is_active)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          primaryRule.is_active ? 'bg-amber-500' : 'bg-slate-700'
+                        }`}
+                        title={primaryRule.is_active ? "Ana Filtreyi Pasife Al" : "Ana Filtreyi Aktifleştir"}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                            primaryRule.is_active ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-100 leading-snug">
+                            {primaryRule.name}
+                          </h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            {primaryRule.description || "4S RSI (14) düşen direnç trendini yukarı kırmış olmalı."}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEditRule(primaryRule)}
+                          className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold transition-all cursor-pointer shrink-0"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span>Parametreleri Düzenle</span>
+                        </button>
+                      </div>
+
+                      {/* Primary Filter Live Parameters Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[10px]">
+                        <div className="p-2 rounded-lg bg-[#161b26] border border-slate-800 flex flex-col">
+                          <span className="text-slate-500">Periyot</span>
+                          <span className="text-amber-400 font-bold mt-0.5">{primaryRule.timeframe?.toUpperCase() || '4S'}</span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#161b26] border border-slate-800 flex flex-col">
+                          <span className="text-slate-500">Maks. Dip RSI (Eşik)</span>
+                          <span className="text-amber-300 font-bold mt-0.5">
+                            0 - {primaryRule.indicator_2_params?.max_trend_end ?? 30}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#161b26] border border-slate-800 flex flex-col">
+                          <span className="text-slate-500">Min. Tepe / Bar</span>
+                          <span className="text-slate-200 font-bold mt-0.5">
+                            {primaryRule.indicator_2_params?.min_peak ?? 55} RSI / {primaryRule.indicator_2_params?.lookback ?? 60}M
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#161b26] border border-slate-800 flex flex-col">
+                          <span className="text-slate-500">Skor Katkısı</span>
+                          <span className="text-emerald-400 font-bold mt-0.5">+{Number(primaryRule.score_impact).toFixed(2)} Puan</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. REGULAR SCORING RULES LIST */}
                 {loading ? (
                   <div className="h-64 flex items-center justify-center border border-slate-800/80 rounded-xl bg-[#12161f]/50 text-sm text-slate-500">
                     Kurallar yükleniyor...
                   </div>
                 ) : (
                   <RuleList 
-                    rules={rules} 
+                    rules={scoringRules} 
                     onDeleteRule={handleDeleteRule} 
                     onDeleteMultiple={handleDeleteMultiple}
                     onSelectRules={setSelectedRules}
@@ -434,6 +544,7 @@ export default function AdminDashboard() {
                 )}
               </div>
 
+              {/* Right Column: Chart Preview */}
               <div className="w-full xl:w-7/12 space-y-6">
                 <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-4 md:p-6 shadow-2xl backdrop-blur-md">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4 mb-4">
@@ -445,7 +556,7 @@ export default function AdminDashboard() {
                         </h3>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        Mum periyodunu ve tarihsel menzili (1A - 5Y) seçerek RSI mavi trend çizgisini inceleyin.
+                        Mum periyodunu ve tarihsel menzili seçerek RSI düşen trend kırılımını test edin.
                       </p>
                     </div>
 
