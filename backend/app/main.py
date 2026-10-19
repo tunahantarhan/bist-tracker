@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api.routers import rules, auth, watchlist, market
+from app.api.routers import auth, market, rules, watchlist, notifications
 from app.scheduler.main import start_scheduler
 
 @asynccontextmanager
@@ -30,6 +30,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(market.router, prefix="/api/v1")
 app.include_router(rules.router, prefix="/api/v1")
 app.include_router(watchlist.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
 
 @app.get("/health")
 async def health_check():

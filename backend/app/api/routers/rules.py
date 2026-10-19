@@ -16,6 +16,8 @@ from app.services.rule_engine import RuleEngine
 from app.services.cache_service import CacheService
 from app.api.routers.market import TICKER_INFO
 from app.models.universe import UniverseStock
+from app.services.notification_service import NotificationService
+from app.models.user import User
 
 router = APIRouter(tags=["Rules & Market"])
 provider = YFinanceProvider()
@@ -290,7 +292,8 @@ async def seed_consultant_default_rules(db: AsyncSession = Depends(get_db)):
 @router.get("/market/overview")
 async def get_market_overview(db: AsyncSession = Depends(get_db)):
     """
-    Scans the entire active BIST universe with Redis caching and single-flight lock protection.
+    Scans the entire active BIST universe with Redis caching, single-flight lock protection,
+    and automatic notification dispatching for stocks passing the primary RSI filter.
     """
     # 1. Fast Redis Cache Check (< 2ms)
     cached_payload = await CacheService.get_json(OVERVIEW_CACHE_KEY)
@@ -397,8 +400,43 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
         _overview_cache["data"] = sanitized_payload
         await CacheService.set_json(OVERVIEW_CACHE_KEY, sanitized_payload, expiration=CacheService.OVERVIEW_EXPIRATION)
 
-        return sanitized_payload
+        # Trigger in-app & email notifications for stocks passing the primary RSI filter
+        if rsi_passed:
+            notif_service = NotificationService(db)
+            users_res = await db.execute(select(User.id, User.email).where(User.is_active == True))
+            active_users = users_res.all()
 
+            primary_rule = next((r for r in active_rules if getattr(r, "is_primary_filter", False)), None)
+            tf_raw = getattr(primary_rule, "timeframe", "4h") or "4h"
+
+            tf_display_map = {
+                "5m": "5 Dakikalık",
+                "15m": "15 Dakikalık",
+                "1h": "1 Saatlik",
+                "4h": "4 Saatlik",
+                "1d": "Günlük",
+            }
+            tf_text = tf_display_map.get(tf_raw.lower(), f"{tf_raw.upper()} periyotluk")
+
+            for item in rsi_passed:
+                sym = item["symbol"]
+                price = item["current_price"]
+                msg = f"{sym} hissesi {tf_text} grafikte RSI (14) düşen direnç trendini yukarı kırdı! Güncel Fiyat: ₺{price:.2f}"
+
+                for uid, uemail in active_users:
+                    try:
+                        await notif_service.trigger_notification(
+                            user_id=uid,
+                            symbol=sym,
+                            message=msg,
+                            rule_id=getattr(primary_rule, "id", None),
+                            user_email=uemail,
+                            timeframe=tf_raw
+                        )
+                    except Exception as e:
+                        print(f"[NOTIF WARNING] Failed to trigger notification for {sym} to user {uid}: {e}")
+
+        return sanitized_payload
 
 @router.get("/market/{symbol}")
 async def get_market_data(
@@ -556,6 +594,8 @@ async def get_market_data(
         except Exception as rsi_err:
             print(f"RSI sub-pane calculation skipped: {rsi_err}")
 
+        primary_timeframe = primary_rule.timeframe if primary_rule else "4h"
+
         response_data = {
             "symbol": clean_sym,
             "interval": interval,
@@ -564,6 +604,7 @@ async def get_market_data(
             "candles": candles,
             "score": evaluation["total_score"],
             "primary_filter_passed": evaluation["primary_filter_passed"],
+            "primary_filter_timeframe": primary_timeframe,
             "has_primary_filter": evaluation["has_primary_filter"],
             "rules_breakdown": evaluation["rules_breakdown"],
             "indicators": indicator_overlays,

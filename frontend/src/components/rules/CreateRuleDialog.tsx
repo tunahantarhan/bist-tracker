@@ -37,6 +37,14 @@ const TIMEFRAMES = [
   { value: '1d', label: '1 Günlük (1g)' },
 ];
 
+const DEFAULT_LOOKBACK_BY_TIMEFRAME: Record<string, string> = {
+  '5m': '240', // 240 periods of 5m = 20 hours
+  '15m': '90', // 90 periods of 15m = 22.5 hours
+  '1h': '80', // 80 periods of 1h = 80 hours
+  '4h': '60', // 60 periods of 4h = 10 days
+  '1d': '60', // 60 periods of 1d = 60 days
+};
+
 const INDICATORS = [
   { value: 'RSI', label: 'RSI' },
   { value: 'SMA', label: 'MA (Basit Hareketli Ortalama)' },
@@ -109,13 +117,13 @@ export default function CreateRuleDialog({
   const [indicator2, setIndicator2] = useState('SMA');
   const [ind2Length, setInd2Length] = useState('14');
 
-  // Trendline parameters specifically for the primary filter
+  // Trendline parameters specifically for the primary filter (Defaults: 60 lookback, 60 min_peak, 30 max_trend_end)
   const [trendLookback, setTrendLookback] = useState('60');
-  const [trendMinPeak, setTrendMinPeak] = useState('55');
+  const [trendMinPeak, setTrendMinPeak] = useState('60');
   const [trendSlope, setTrendSlope] = useState('');
   const [trendMaxEnd, setTrendMaxEnd] = useState('30');
 
-  const [scoreImpact, setScoreImpact] = useState('10.00');
+  const [scoreImpact, setScoreImpact] = useState('25.00');
 
   useEffect(() => {
     if (editingRule && open) {
@@ -131,14 +139,14 @@ export default function CreateRuleDialog({
 
       if (editingRule.indicator_2_params) {
         setTrendLookback(editingRule.indicator_2_params.lookback?.toString() || '60');
-        setTrendMinPeak(editingRule.indicator_2_params.min_peak?.toString() || '55');
+        setTrendMinPeak(editingRule.indicator_2_params.min_peak?.toString() || '60');
         setTrendMaxEnd(editingRule.indicator_2_params.max_trend_end?.toString() || '30');
         setTrendSlope(editingRule.indicator_2_params.slope !== undefined && editingRule.indicator_2_params.slope !== null ? String(editingRule.indicator_2_params.slope) : '');
       }
-      setScoreImpact(editingRule.score_impact !== undefined ? String(editingRule.score_impact) : '10.00');
+      setScoreImpact(editingRule.score_impact !== undefined ? String(editingRule.score_impact) : (isEditingPrimary ? '25.00' : '10.00'));
     } else if (!editingRule && open) {
       setName('');
-      setTimeframe('15m');
+      setTimeframe('4h');
       setIndicator1('SMA');
       setInd1Length('9');
       setCondition('>');
@@ -147,12 +155,20 @@ export default function CreateRuleDialog({
       setIndicator2('SMA');
       setInd2Length('14');
       setTrendLookback('60');
-      setTrendMinPeak('55');
+      setTrendMinPeak('60');
       setTrendSlope('');
       setTrendMaxEnd('30');
       setScoreImpact('10.00');
     }
-  }, [editingRule, open]);
+  }, [editingRule, open, isEditingPrimary]);
+
+  // Auto-adjust default lookback when timeframe changes for the primary filter
+  const handlePrimaryTimeframeChange = (newTf: string) => {
+    setTimeframe(newTf);
+    if (DEFAULT_LOOKBACK_BY_TIMEFRAME[newTf]) {
+      setTrendLookback(DEFAULT_LOOKBACK_BY_TIMEFRAME[newTf]);
+    }
+  };
 
   // Scoring Presets for new rules
   const applyPreset = (preset: 'ma_cross_15m' | 'ma_cross_5m' | 'macd_4h' | 'bollinger_4h') => {
@@ -202,7 +218,7 @@ export default function CreateRuleDialog({
       const p: Record<string, any> = {
         length: 14,
         lookback: parseInt(trendLookback, 10) || 60,
-        min_peak: parseFloat(trendMinPeak) || 55.0,
+        min_peak: parseFloat(trendMinPeak) || 60.0,
         max_trend_end: parseFloat(trendMaxEnd) || 30.0,
       };
       if (trendSlope.trim() !== '' && !isNaN(parseFloat(trendSlope))) {
@@ -222,11 +238,11 @@ export default function CreateRuleDialog({
 
     setLoading(true);
     
-    // Primary filter keeps its unique structure
+    // Primary filter keeps dynamic timeframe and trendline parameters
     const payload = isEditingPrimary ? {
       name,
       description: name,
-      timeframe: '4h',
+      timeframe,
       is_primary_filter: true,
       indicator_1: 'RSI',
       indicator_1_params: { length: 14 },
@@ -240,7 +256,7 @@ export default function CreateRuleDialog({
       name,
       description: name,
       timeframe,
-      is_primary_filter: false, // All created rules are scoring rules
+      is_primary_filter: false,
       indicator_1: indicator1,
       indicator_1_params: buildParams(indicator1, ind1Length),
       condition,
@@ -361,10 +377,28 @@ export default function CreateRuleDialog({
               />
             </div>
 
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-300">Zaman Dilimi (Mum Periyodu)</Label>
+              <Select value={timeframe} onValueChange={(val) => val && handlePrimaryTimeframeChange(val)}>
+                <SelectTrigger>
+                  <SelectValue>{getTimeframeLabel(timeframe)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEFRAMES.map((tf) => (
+                    <SelectItem key={tf.value} value={tf.value}>
+                      {tf.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="rounded-xl border border-amber-500/30 bg-[#161b26] p-4 space-y-3.5">
               <div className="flex items-center justify-between text-xs font-semibold text-amber-400">
-                <span>📐 4S RSI (14) Düşen Trend Matematiksel Parametreleri</span>
-                <span className="text-[10px] font-mono text-slate-400">4 Saatlik Periyot</span>
+                <span>📐 RSI (14) Düşen Trend Matematiksel Parametreleri</span>
+                <span className="text-[10px] font-mono text-slate-400 font-bold bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">
+                  {getTimeframeLabel(timeframe)}
+                </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono">

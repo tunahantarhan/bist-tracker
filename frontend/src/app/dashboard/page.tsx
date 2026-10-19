@@ -47,6 +47,56 @@ const CHART_PERIODS = [
   { value: '2y', label: '2Y' }, { value: '5y', label: '5Y' },
 ];
 
+// Default chart configuration mapped directly to the active RSI filter timeframe
+const DEFAULT_CONFIG_BY_TIMEFRAME: Record<string, { interval: string; period: string }> = {
+  '5m': { interval: '5m', period: '1mo' },
+  '15m': { interval: '15m', period: '1mo' },
+  '1h': { interval: '1h', period: '3mo' },
+  '4h': { interval: '4h', period: '6mo' },
+  '1d': { interval: '1d', period: '6mo' },
+};
+
+const getDefaultChartConfig = (tf?: string) => {
+  return DEFAULT_CONFIG_BY_TIMEFRAME[tf?.toLowerCase() || '4h'] || { interval: '4h', period: '6mo' };
+};
+
+// Helper functions to format timeframe codes into Turkish UI representations
+const formatTfLabel = (tf?: string) => {
+  if (!tf) return '4S';
+  const map: Record<string, string> = {
+    '5m': '5Dk',
+    '15m': '15Dk',
+    '1h': '1S',
+    '4h': '4S',
+    '1d': '1G',
+  };
+  return map[tf.toLowerCase()] || tf.toUpperCase();
+};
+
+const formatTfLongLabel = (tf?: string) => {
+  if (!tf) return '4 Saatlik (4S)';
+  const map: Record<string, string> = {
+    '5m': '5 Dakikalık (5Dk)',
+    '15m': '15 Dakikalık (15Dk)',
+    '1h': '1 Saatlik (1S)',
+    '4h': '4 Saatlik (4S)',
+    '1d': 'Günlük (1G)',
+  };
+  return map[tf.toLowerCase()] || tf.toUpperCase();
+};
+
+const formatTfFullText = (tf?: string) => {
+  if (!tf) return '4 Saat';
+  const map: Record<string, string> = {
+    '5m': '5 Dakika',
+    '15m': '15 Dakika',
+    '1h': '1 Saat',
+    '4h': '4 Saat',
+    '1d': '1 Gün',
+  };
+  return map[tf.toLowerCase()] || tf;
+};
+
 interface TopPricedRowProps {
   item: TickerItem;
   rank: number;
@@ -136,6 +186,10 @@ export default function DashboardPage() {
   const [isRuleDrawerOpen, setIsRuleDrawerOpen] = useState<boolean>(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
 
+  // Dynamic timeframe state for active primary filter (updated from API)
+  const [primaryFilterTf, setPrimaryFilterTf] = useState<string>('4h');
+
+  // Initial chart configuration (dynamically synced with primary filter on initialization)
   const [chartConfig, setChartConfig] = useState<{ interval: string; period: string }>({
     interval: '4h', period: '6mo',
   });
@@ -209,6 +263,36 @@ export default function DashboardPage() {
     }
   };
 
+  // Dedicated handler for RSI list: automatically switches chart to primary rule timeframe
+  const handleSelectRsiStockWithScroll = (symbol: string) => {
+    const targetConfig = getDefaultChartConfig(primaryFilterTf);
+    setChartConfig(targetConfig);
+    handleSelectStockWithScroll(symbol);
+  };
+
+  // Synchronizes active primary filter timeframe directly from backend rules and updates default chart config
+  const refreshPrimaryFilterTimeframe = useCallback(async (syncChartConfig = false) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${API_URL}/rules`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const rules = await res.json();
+        const primary = rules.find((r: any) => r.is_primary_filter);
+        if (primary?.timeframe) {
+          const tf = primary.timeframe;
+          setPrimaryFilterTf(tf);
+          if (syncChartConfig) {
+            setChartConfig(getDefaultChartConfig(tf));
+          }
+        }
+      }
+    } catch {
+      // Silent error fallback
+    }
+  }, []);
+
   // Refreshes left menu RSI and ranking overview without modifying the selected stock
   const refreshOverview = useCallback(async () => {
     try {
@@ -243,6 +327,9 @@ export default function DashboardPage() {
       });
       if (cachedData.marketData) {
         setMarketData(cachedData.marketData);
+        if ((cachedData.marketData as any).primary_filter_timeframe) {
+          setPrimaryFilterTf((cachedData.marketData as any).primary_filter_timeframe);
+        }
       }
       setLoadingMarket(false);
     } else if (!isBackground) {
@@ -252,6 +339,10 @@ export default function DashboardPage() {
     try {
       const data = await fetchMarketData(symbol, interval, period, signal);
       setMarketData(data);
+
+      if ((data as any).primary_filter_timeframe) {
+        setPrimaryFilterTf((data as any).primary_filter_timeframe);
+      }
 
       const newChartPayload = {
         candles: data.candles,
@@ -301,7 +392,10 @@ export default function DashboardPage() {
       .then((data) => setLiveTickerData(data))
       .catch((err) => console.warn('Ticker init warning:', err));
 
-    // 3. Fetch Overview (RSI and Top Scored lists)
+    // 3. Fetch primary rule configuration and sync initial chart timeframe & period
+    await refreshPrimaryFilterTimeframe(true);
+
+    // 4. Fetch Overview (RSI and Top Scored lists)
     try {
       const ov = await fetchMarketOverview();
       setOverview(ov);
@@ -324,7 +418,7 @@ export default function DashboardPage() {
     } finally {
       setLoadingOverview(false);
     }
-  }, []);
+  }, [refreshPrimaryFilterTimeframe]);
 
   // Real-time synchronization with admin panel rules via BroadcastChannel
   useEffect(() => {
@@ -333,6 +427,7 @@ export default function DashboardPage() {
       bc.onmessage = (event) => {
         if (event.data === 'RULES_UPDATED') {
           setTimeout(() => {
+            refreshPrimaryFilterTimeframe(true);
             refreshOverview();
             if (selectedSymbolRef.current) {
               setChartConfig((prev) => ({ ...prev }));
@@ -344,7 +439,7 @@ export default function DashboardPage() {
     } catch (e) {
       console.warn("BroadcastChannel unsupported");
     }
-  }, [refreshOverview]);
+  }, [refreshOverview, refreshPrimaryFilterTimeframe]);
 
   // Initial authentication verification and dashboard boot
   useEffect(() => {
@@ -428,7 +523,6 @@ export default function DashboardPage() {
       setLoadingOverview(false);
     };
 
-    // Run once on mount, then continue every 15s
     runHeartbeat();
     const heartbeatTimer = setInterval(runHeartbeat, 15000);
     return () => clearInterval(heartbeatTimer);
@@ -482,14 +576,12 @@ export default function DashboardPage() {
       return;
     }
 
-    // Reset reference without flashing when switching to a different stock
     if (!lastRenderedScoreRef.current || lastRenderedScoreRef.current.symbol !== selectedSymbol) {
       lastRenderedScoreRef.current = { symbol: selectedSymbol, score: currentScore };
       setScoreFlash(null);
       return;
     }
 
-    // Trigger flash only if the score changed for the same stock
     if (lastRenderedScoreRef.current.symbol === selectedSymbol && lastRenderedScoreRef.current.score !== currentScore) {
       const direction = currentScore > lastRenderedScoreRef.current.score ? 'up' : 'down';
       setScoreFlash(direction);
@@ -509,14 +601,12 @@ export default function DashboardPage() {
     const sym = marketData.symbol;
     const price = marketData.current_price;
 
-    // Reset reference without flashing when switching to a different stock
     if (!lastRenderedPriceRef.current || lastRenderedPriceRef.current.symbol !== sym) {
       lastRenderedPriceRef.current = { symbol: sym, price };
       setPriceFlash(null);
       return;
     }
 
-    // Trigger flash only if the price changed for the same stock
     if (lastRenderedPriceRef.current.symbol === sym && lastRenderedPriceRef.current.price !== price) {
       const direction = price > lastRenderedPriceRef.current.price ? 'up' : 'down';
       setPriceFlash(direction);
@@ -535,6 +625,9 @@ export default function DashboardPage() {
   const dynamicTopPriced = [...liveTickerData]
     .sort((a, b) => b.current_price - a.current_price)
     .slice(0, 10);
+
+  // Active primary filter timeframe strictly determined for badge and dynamic cards
+  const activePrimaryFilterTf = (marketData as any)?.primary_filter_timeframe || primaryFilterTf || '4h';
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0e14] text-slate-200 overflow-x-hidden">
@@ -750,7 +843,7 @@ export default function DashboardPage() {
                       rsiPassedList.map((item) => (
                         <div 
                           key={item.symbol} 
-                          onClick={() => handleSelectStockWithScroll(item.symbol)} 
+                          onClick={() => handleSelectRsiStockWithScroll(item.symbol)} 
                           className={`flex items-center justify-between px-4 py-3 cursor-pointer ${selectedSymbol === item.symbol ? 'bg-amber-500/10 border-l-2 border-l-amber-400' : 'border-l-2 border-l-transparent hover:bg-slate-800/30'}`}
                         >
                           <div className="flex items-center space-x-3 min-w-0">
@@ -778,6 +871,7 @@ export default function DashboardPage() {
                     </button>
                   </div>
 
+                  {/* Dynamic RSI explanation drawer based on active filter timeframe */}
                   <div 
                     ref={rsiInfoRef}
                     onClick={(e) => e.stopPropagation()}
@@ -788,11 +882,13 @@ export default function DashboardPage() {
                     <div className="overflow-hidden">
                       <div className="p-3.5 bg-[#161b26] border-t border-amber-500/20 text-xs space-y-2 select-none">
                         <p className="text-[11px] text-slate-300 leading-relaxed">
-                          Bu liste, BIST evrenindeki hisseleri <strong className="text-white">4 Saatlik (4S)</strong> periyotta analiz eder. <strong className="text-purple-400">RSI (14)</strong> indikatörünün <strong className="text-blue-400">düşen trend direncini</strong> yukarı kırdığı hisseleri tespit eder.
+                          Bu liste, BIST evrenindeki hisseleri <strong className="text-white">{formatTfLongLabel(activePrimaryFilterTf)}</strong> periyotta analiz eder. <strong className="text-purple-400">RSI (14)</strong> indikatörünün <strong className="text-blue-400">düşen trend direncini</strong> yukarı kırdığı hisseleri tespit eder.
                         </p>
                         <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
                           <span>Hesaplama Periyodu:</span>
-                          <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">4S / 4 Saat</span>
+                          <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                            {formatTfLabel(activePrimaryFilterTf)} / {formatTfFullText(activePrimaryFilterTf)}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -852,10 +948,17 @@ export default function DashboardPage() {
                            <span className="text-[10px] font-mono text-slate-500 border border-slate-700 bg-slate-800/50 px-2 py-1 rounded">
                              {dynamicNames[selectedSymbol!] || selectedSymbol}
                            </span>
+
+                           {/* Dynamic primary filter badge indicating timeframe */}
                            {marketData && marketData.symbol === selectedSymbol && marketData.has_primary_filter && (
-                             <span className={`px-2 py-1 rounded border text-[10px] font-mono font-semibold flex items-center space-x-1 ${marketData.primary_filter_passed ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                             <span className={`px-2 py-1 rounded border text-[10px] font-mono font-semibold flex items-center space-x-1.5 ${
+                               marketData.primary_filter_passed 
+                                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                                 : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                             }`}>
                                <Filter className="h-3 w-3" />
                                <span>{marketData.primary_filter_passed ? 'FİLTRE OK' : 'FİLTRE BEKLENİYOR'}</span>
+                               <span className="opacity-80">({formatTfLabel(activePrimaryFilterTf)})</span>
                              </span>
                            )}
                         </div>

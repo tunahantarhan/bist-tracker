@@ -216,3 +216,50 @@ export const updateActiveUniverse = async (symbols: string[]) => {
   if (!res.ok) throw new Error('Evren güncellenirken bir hata oluştu');
   return await res.json();
 };
+
+export interface AppNotification {
+  id: number;
+  user_id: number;
+  rule_id: number | null;
+  symbol: string | null;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export async function fetchNotifications(limit: number = 20): Promise<AppNotification[]> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/notifications?limit=${limit}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Bildirimler alınamadı');
+  return await res.json();
+}
+
+export async function fetchUnreadNotificationCount(): Promise<number> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/notifications/unread-count`, { cache: 'no-store' });
+  if (!res.ok) return 0;
+  const data = await res.json();
+  return data.unread_count ?? 0;
+}
+
+export async function markNotificationAsRead(id: number): Promise<void> {
+  await fetchWithAuth(`${API_BASE_URL}/notifications/${id}/read`, {
+    method: 'PATCH',
+  });
+}
+
+export async function markAllNotificationsAsRead(): Promise<void> {
+  await fetchWithAuth(`${API_BASE_URL}/notifications/read-all`, {
+    method: 'PATCH',
+  });
+}
+
+export async function deleteNotification(id: number): Promise<void> {
+  await fetchWithAuth(`${API_BASE_URL}/notifications/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function clearAllNotifications(): Promise<void> {
+  await fetchWithAuth(`${API_BASE_URL}/notifications/clear-all`, {
+    method: 'DELETE',
+  });
+}
