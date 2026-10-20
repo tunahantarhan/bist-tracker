@@ -12,12 +12,48 @@ import {
   AppNotification 
 } from '@/services/api';
 
+// Synthesizes a crisp, professional two-tone notification chime using browser Web Audio API
+const playNotificationSound = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc1.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+    gain1.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start();
+    osc1.stop(ctx.currentTime + 0.35);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880, ctx.currentTime + 0.08);
+    osc2.frequency.exponentialRampToValueAtTime(1174.66, ctx.currentTime + 0.28);
+    gain2.gain.setValueAtTime(0.10, ctx.currentTime + 0.08);
+    gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(ctx.currentTime + 0.08);
+    osc2.stop(ctx.currentTime + 0.55);
+  } catch {
+    // Audio Context might wait for initial user interaction on strict autoplay policies
+  }
+};
+
 export default function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef<number | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -34,6 +70,12 @@ export default function NotificationBell() {
   const loadUnreadCount = useCallback(async () => {
     try {
       const count = await fetchUnreadNotificationCount();
+      
+      // Play alert chime when unread notifications increase while dashboard is open/in background
+      if (prevCountRef.current !== null && count > prevCountRef.current) {
+        playNotificationSound();
+      }
+      prevCountRef.current = count;
       setUnreadCount(count);
     } catch {
       // Silent error handling
@@ -72,6 +114,7 @@ export default function NotificationBell() {
         prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
+      prevCountRef.current = Math.max(0, (prevCountRef.current || 1) - 1);
       markNotificationAsRead(notif.id).catch(console.warn);
     }
 
@@ -86,6 +129,7 @@ export default function NotificationBell() {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
     if (!isRead) {
       setUnreadCount((prev) => Math.max(0, prev - 1));
+      prevCountRef.current = Math.max(0, (prevCountRef.current || 1) - 1);
     }
     try {
       await deleteNotification(id);
@@ -97,6 +141,7 @@ export default function NotificationBell() {
   const handleMarkAllRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     setUnreadCount(0);
+    prevCountRef.current = 0;
     try {
       await markAllNotificationsAsRead();
     } catch (err) {
@@ -107,6 +152,7 @@ export default function NotificationBell() {
   const handleClearAll = async () => {
     setNotifications([]);
     setUnreadCount(0);
+    prevCountRef.current = 0;
     try {
       await clearAllNotifications();
     } catch (err) {
@@ -228,7 +274,6 @@ export default function NotificationBell() {
                     )}
                   </div>
 
-                  {/* Singular Delete Button */}
                   <button
                     type="button"
                     onClick={(e) => handleDeleteItem(e, notif.id, notif.is_read)}

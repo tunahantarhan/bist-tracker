@@ -319,10 +319,25 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
             select(Rule).where(Rule.is_active == True).order_by(Rule.is_primary_filter.desc(), Rule.id.asc())
         )
         active_rules = list(active_rules_res.scalars().all())
+
+        # Determine the primary rule and its timeframe for consistent evaluation
+        primary_rule = next((r for r in active_rules if getattr(r, "is_primary_filter", False)), None)
+        primary_tf = getattr(primary_rule, "timeframe", "4h") or "4h"
+
         required_tfs = {getattr(r, "timeframe", "1d") or "1d" for r in active_rules}
         if not required_tfs:
-            required_tfs = {"4h"}
+            required_tfs = {primary_tf}
         required_tfs.add("1d")
+        required_tfs.add(primary_tf)
+
+        # Period map that guarantees the same candle depth as the detail page for each timeframe
+        tf_period_map = {
+            "5m": "1mo",
+            "15m": "1mo",
+            "1h": "3mo",
+            "4h": "6mo",
+            "1d": "6mo"
+        }
 
         active_stocks_res = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
         symbols = [s.symbol for s in active_stocks_res.scalars().all()]
@@ -337,23 +352,29 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                 try:
                     dfs_by_tf = {}
                     for tf in required_tfs:
-                        df = await provider.fetch_historical_data(symbol=sym, interval=tf)
+                        target_period = tf_period_map.get(tf.lower(), "6mo")
+                        df = await provider.fetch_historical_data(symbol=sym, interval=tf, period=target_period)
                         if df is not None and not df.empty:
                             dfs_by_tf[tf] = df.dropna(subset=["Close"])
 
-                    default_df = dfs_by_tf.get("4h")
+                    default_df = dfs_by_tf.get(primary_tf)
+                    if default_df is None or default_df.empty:
+                        default_df = dfs_by_tf.get("4h")
                     if default_df is None or default_df.empty:
                         default_df = next(iter(dfs_by_tf.values()), pd.DataFrame())
 
                     if default_df.empty or len(default_df) < 2:
                         return None
 
-                    # Extract price directly from candles without firing extra HTTP calls
-                    daily_df = dfs_by_tf.get("1d", default_df)
-                    closes = daily_df["Close"].astype(float).tolist()
-                    last_close = round(closes[-1], 2)
-                    prev_close = round(closes[-2], 2) if len(closes) > 1 else last_close
-                    change_pct = round(((last_close - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                    last_close = round(float(default_df["Close"].iloc[-1]), 2)
+                    daily_df = dfs_by_tf.get("1d")
+                    if daily_df is not None and not daily_df.empty and len(daily_df) >= 2:
+                        prev_close = round(float(daily_df["Close"].iloc[-2]), 2)
+                        change_pct = round(((last_close - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                    else:
+                        closes = default_df["Close"].astype(float).tolist()
+                        prev_close = round(closes[-2], 2) if len(closes) > 1 else last_close
+                        change_pct = round(((last_close - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
                     eval_res = {
                         "total_score": 0.0,
@@ -406,8 +427,7 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
             users_res = await db.execute(select(User.id, User.email).where(User.is_active == True))
             active_users = users_res.all()
 
-            primary_rule = next((r for r in active_rules if getattr(r, "is_primary_filter", False)), None)
-            tf_raw = getattr(primary_rule, "timeframe", "4h") or "4h"
+            tf_raw = primary_tf
 
             tf_display_map = {
                 "5m": "5 Dakikalık",
@@ -437,7 +457,7 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                         print(f"[NOTIF WARNING] Failed to trigger notification for {sym} to user {uid}: {e}")
 
         return sanitized_payload
-
+    
 @router.get("/market/{symbol}")
 async def get_market_data(
     symbol: str,
@@ -598,6 +618,7 @@ async def get_market_data(
 
         response_data = {
             "symbol": clean_sym,
+            "name": TICKER_INFO.get(clean_sym, clean_sym),
             "interval": interval,
             "current_price": round(last_close, 2) if pd.notna(last_close) else 0.0,
             "change_pct": change_pct if pd.notna(change_pct) else 0.0,

@@ -10,13 +10,32 @@ _LOCAL_COOLDOWN: dict[str, float] = {}
 
 
 class NotificationService:
-    COOLDOWN_SECONDS = 4 * 3600  # 4 hours
+    # Dynamic cooldown lookup table based on rule timeframe (in seconds)
+    TIMEFRAME_COOLDOWNS = {
+        "5m": 30 * 60,      # 30 minutes
+        "15m": 60 * 60,     # 1 hour (4 candles)
+        "1h": 1.5 * 3600,     # 1.5 hours
+        "4h": 4 * 3600,     # 4 hours
+        "1d": 24 * 3600,    # 24 hours (1 full trading day)
+    }
 
     def __init__(self, db: AsyncSession, email_service: Optional[EmailService] = None):
         self.db = db
         self.email_service = email_service or EmailService()
 
-    async def is_on_cooldown(self, user_id: int, symbol: str, rule_id: Optional[int] = None) -> bool:
+    def get_cooldown_seconds(self, timeframe: Optional[str]) -> int:
+        """Returns the appropriate cooldown period in seconds for the given timeframe."""
+        if not timeframe:
+            return 3600
+        return self.TIMEFRAME_COOLDOWNS.get(timeframe.lower(), 3600)
+
+    async def is_on_cooldown(
+        self, 
+        user_id: int, 
+        symbol: str, 
+        timeframe: Optional[str] = None,
+        rule_id: Optional[int] = None
+    ) -> bool:
         """
         Verifies cooldown using Redis/Memory cache.
         User clearing their UI inbox will NOT reset this lock!
@@ -28,18 +47,26 @@ class NotificationService:
         if cached:
             return True
 
-        # 2. Memory fallback check
+        # 2. In-memory fallback check
+        cooldown_limit = self.get_cooldown_seconds(timeframe)
         now = time.time()
-        if key in _LOCAL_COOLDOWN and (now - _LOCAL_COOLDOWN[key]) < self.COOLDOWN_SECONDS:
+        if key in _LOCAL_COOLDOWN and (now - _LOCAL_COOLDOWN[key]) < cooldown_limit:
             return True
 
         return False
 
-    async def set_cooldown(self, user_id: int, symbol: str):
-        """Locks the symbol for 4 hours independently of notification table rows."""
+    async def set_cooldown(
+        self, 
+        user_id: int, 
+        symbol: str, 
+        timeframe: Optional[str] = None
+    ):
+        """Locks the symbol independently of notification table rows."""
         key = f"bist_cooldown:{user_id}:{symbol.upper()}"
+        cooldown_seconds = self.get_cooldown_seconds(timeframe)
+        
         _LOCAL_COOLDOWN[key] = time.time()
-        await CacheService.set_json(key, {"locked": True}, expiration=self.COOLDOWN_SECONDS)
+        await CacheService.set_json(key, {"locked": True}, expiration=cooldown_seconds)
 
     async def trigger_notification(
         self,
@@ -53,12 +80,12 @@ class NotificationService:
     ) -> Optional[Notification]:
         clean_sym = symbol.upper()
 
-        # 1. Cooldown Guard
-        if not force and await self.is_on_cooldown(user_id, clean_sym, rule_id):
+        # 1. Dynamic Cooldown Guard based on rule timeframe
+        if not force and await self.is_on_cooldown(user_id, clean_sym, timeframe, rule_id):
             return None
 
         # 2. Lock immediately so clearing inbox later won't revive it
-        await self.set_cooldown(user_id, clean_sym)
+        await self.set_cooldown(user_id, clean_sym, timeframe)
 
         # 3. Create inbox notification
         new_notification = Notification(

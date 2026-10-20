@@ -1,0 +1,328 @@
+'use client';
+
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { 
+  ArrowLeft, Bell, BellOff, CheckCircle2, XCircle, 
+  TrendingUp, TrendingDown, ShieldCheck, ChevronRight 
+} from 'lucide-react';
+import ChartWrapper from '@/components/charts/ChartWrapper';
+import { API_URL } from '@/services/api';
+
+interface RuleBreakdownItem {
+  id: number;
+  name: string;
+  timeframe: string;
+  is_primary_filter: boolean;
+  score_impact: number;
+  passed: boolean;
+  left_value?: number | null;
+  right_value?: number | null;
+  condition?: string;
+}
+
+interface StockDetailData {
+  symbol: string;
+  name?: string;
+  interval: string;
+  current_price: number;
+  change_pct: number;
+  candles: any[];
+  score: number;
+  primary_filter_passed: boolean;
+  primary_filter_timeframe: string;
+  rules_breakdown: RuleBreakdownItem[];
+  indicators: any[];
+  rsiPane: any;
+}
+
+// BIST Şirket İsimleri Sözlüğü (Backend gecikse dahi anında gösterir)
+const BIST_COMPANY_NAMES: Record<string, string> = {
+  VESTL: "Vestel Elektronik Sanayi ve Ticaret A.Ş.",
+  THYAO: "Türk Hava Yolları A.O.",
+  ASELS: "Aselsan Elektronik Sanayi ve Ticaret A.Ş.",
+  GARAN: "Türkiye Garanti Bankası A.Ş.",
+  AKBNK: "Akbank T.A.Ş.",
+  YKBNK: "Yapı ve Kredi Bankası A.Ş.",
+  ISCTR: "Türkiye İş Bankası A.Ş. (C)",
+  KCHOL: "Koç Holding A.Ş.",
+  SAHOL: "Hacı Ömer Sabancı Holding A.Ş.",
+  TUPRS: "Tüpraş Türkiye Petrol Rafinerileri A.Ş.",
+  EREGL: "Ereğli Demir ve Çelik Fabrikaları T.A.Ş.",
+  SISE: "Türkiye Şişe ve Cam Fabrikaları A.Ş.",
+  BIMAS: "BİM Birleşik Mağazalar A.Ş.",
+  FROTO: "Ford Otomotiv Sanayi A.Ş.",
+  TOASO: "Tofaş Türk Otomobil Fabrikası A.Ş.",
+  TTKOM: "Türk Telekomünikasyon A.Ş.",
+  TCELL: "Turkcell İletişim Hizmetleri A.Ş.",
+  PETKM: "Petkim Petrokimya Holding A.Ş.",
+  PGSUS: "Pegasus Hava Taşımacılığı A.Ş.",
+  KOZAL: "Koza Altın İşletmeleri A.Ş.",
+  EKGYO: "Emlak Konut Gayrimenkul Yatırım Ortaklığı A.Ş.",
+  ASTOR: "Astor Enerji A.Ş.",
+  KONTR: "Kontrolmatik Teknoloji Enerji ve Mühendislik A.Ş.",
+  HEKTS: "Hektaş Ticaret T.A.Ş.",
+  SASA: "SASA Polyester Sanayi A.Ş.",
+  MIATK: "Mia Teknoloji A.Ş.",
+  RTALB: "RTA Laboratuvarları Biyolojik Ürünler İlaç San. A.Ş.",
+  SKBNK: "Şekerbank T.A.Ş.",
+  ODAS: "Odaş Elektrik Üretim Sanayi Ticaret A.Ş.",
+  ALARK: "Alarko Holding A.Ş.",
+  TATGD: "Tat Gıda Sanayi A.Ş.",
+  ULKER: "Ülker Bisküvi Sanayi A.Ş.",
+  GOODY: "Goodyear Lastikleri T.A.Ş.",
+  KARSN: "Karsan Otomotiv Sanayii ve Ticaret A.Ş.",
+};
+
+const TIMEFRAME_OPTIONS = [
+  { label: '5Dk', value: '5m', period: '1mo' },
+  { label: '15Dk', value: '15m', period: '1mo' },
+  { label: '1S', value: '1h', period: '3mo' },
+  { label: '4S', value: '4h', period: '6mo' },
+  { label: '1G', value: '1d', period: '1y' },
+];
+
+export default function StockDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const symbol = (params?.symbol as string)?.toUpperCase() || '';
+
+  const [timeframe, setTimeframe] = useState<string>('15m');
+  const [data, setData] = useState<StockDetailData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [hasCustomAlert, setHasCustomAlert] = useState<boolean>(false);
+  const [alertLoading, setAlertLoading] = useState<boolean>(false);
+
+  const handleSmartBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1 && document.referrer.includes(window.location.host)) {
+      router.back();
+    } else {
+      router.push('/ana-sayfa');
+    }
+  };
+
+  const companyTitle = useMemo(() => {
+    if (data?.name && data.name !== symbol) return data.name;
+    if (BIST_COMPANY_NAMES[symbol]) return BIST_COMPANY_NAMES[symbol];
+    return `${symbol} Pay Piyasası`;
+  }, [data, symbol]);
+
+  const fetchStockData = useCallback(async (selectedTf: string) => {
+    if (!symbol) return;
+    try {
+      const activeOption = TIMEFRAME_OPTIONS.find((opt) => opt.value === selectedTf) || TIMEFRAME_OPTIONS[1];
+      const res = await fetch(`${API_URL}/market/${symbol}?interval=${activeOption.value}&period=${activeOption.period}`);
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+      }
+    } catch (err) {
+      console.error('Hisse detay yükleme hatası:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol]);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchStockData(timeframe);
+  }, [timeframe, fetchStockData]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchStockData(timeframe);
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [timeframe, fetchStockData]);
+
+  const handleToggleAlert = async () => {
+    setAlertLoading(true);
+    setTimeout(() => {
+      setHasCustomAlert((prev) => !prev);
+      setAlertLoading(false);
+    }, 400);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0b0e14] text-slate-100 flex flex-col">
+      {/* Top Navigation Bar */}
+      <header className="px-4 sm:px-8 py-3.5 border-b border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between">
+        <div className="flex items-center space-x-3 sm:space-x-4">
+          <button
+            type="button"
+            onClick={handleSmartBack}
+            className="p-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Geri Dön"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="flex items-center space-x-2">
+            <Link href="/ana-sayfa" className="text-xs font-mono text-slate-400 hover:text-blue-400 transition-colors">
+              Panel
+            </Link>
+            <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
+            <span className="font-mono font-bold text-sm text-slate-100">{symbol}</span>
+          </div>
+        </div>
+
+        {/* Special Alert Button */}
+        <button
+          type="button"
+          onClick={handleToggleAlert}
+          disabled={alertLoading}
+          className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
+            hasCustomAlert
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+              : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+          }`}
+        >
+          {hasCustomAlert ? <Bell className="h-3.5 w-3.5 fill-amber-400 text-amber-400" /> : <BellOff className="h-3.5 w-3.5" />}
+          <span>{hasCustomAlert ? 'Alarm Açık (Özel)' : 'Bu Hisse İçin Alarm Kur'}</span>
+        </button>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 space-y-6">
+        {/* Header Ticker Card */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
+          <div className="flex items-center space-x-4">
+            <div className="h-12 w-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center font-mono font-bold text-blue-400 text-base shrink-0">
+              {symbol.slice(0, 3)}
+            </div>
+            <div>
+              <div className="flex items-center space-x-2.5">
+                <h1 className="text-2xl font-black font-mono tracking-tight text-white">{symbol}</h1>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold ${
+                  data?.primary_filter_passed 
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                }`}>
+                  {data?.primary_filter_passed ? 'FİLTRE ONAYLANDI' : 'FİLTRE BEKLENİYOR'}
+                </span>
+              </div>
+              {/* Full Name of the Company */}
+              <p className="text-xs text-slate-400 mt-1 font-medium truncate max-w-[280px] sm:max-w-md">
+                {companyTitle}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-6 shrink-0">
+            <div className="text-right">
+              <div className="text-2xl font-black font-mono text-white">
+                ₺{data?.current_price?.toFixed(2) ?? '---'}
+              </div>
+              <div className={`text-xs font-mono font-semibold flex items-center justify-end space-x-1 ${
+                (data?.change_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}>
+                {(data?.change_pct ?? 0) >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                <span>{(data?.change_pct ?? 0) >= 0 ? '+' : ''}{data?.change_pct?.toFixed(2)}%</span>
+              </div>
+            </div>
+
+            <div className="h-10 w-px bg-slate-800 hidden sm:block" />
+
+            <div className="text-center sm:text-right">
+              <div className="text-xs text-slate-500 font-mono">Toplam Skor</div>
+              <div className="text-2xl font-black font-mono text-emerald-400">
+                {data?.score?.toFixed(1) ?? '0.0'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Timeframe Buttons */}
+        <div className="flex items-center space-x-1 bg-[#12161f] p-1 rounded-xl border border-slate-800/80 w-fit">
+          {TIMEFRAME_OPTIONS.map((opt) => {
+            const isSelected = timeframe === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setTimeframe(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Chart View */}
+        <div className="p-4 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
+          {loading ? (
+            <div className="h-[480px] flex items-center justify-center text-xs font-mono text-slate-500">
+              Grafik ve teknik veriler yükleniyor...
+            </div>
+          ) : data?.candles && data.candles.length > 0 ? (
+            <ChartWrapper
+              candles={data.candles}
+              indicators={data.indicators}
+              rsiPane={data.rsiPane}
+              height={360}
+            />
+          ) : (
+            <div className="h-[480px] flex items-center justify-center text-xs font-mono text-slate-500">
+              Bu periyotta gösterilecek mum verisi bulunamadı.
+            </div>
+          )}
+        </div>
+
+        {/* Rule Analysis Report */}
+        <div className="space-y-3">
+          <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
+            <ShieldCheck className="h-4 w-4 text-blue-400" />
+            <span>Kural Analiz Karnesi ({symbol})</span>
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {data?.rules_breakdown?.map((rule) => (
+              <div
+                key={rule.id}
+                className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
+                  rule.passed
+                    ? 'bg-emerald-950/10 border-emerald-500/25'
+                    : 'bg-[#12161f]/40 border-slate-800/80'
+                }`}
+              >
+                <div className="space-y-1 pr-3">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-semibold text-slate-200">{rule.name}</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                      {rule.timeframe?.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-500">
+                    {rule.left_value !== undefined && rule.left_value !== null ? (
+                      <span>
+                        Değer: <strong className="text-slate-300">{rule.left_value.toFixed(2)}</strong> {rule.condition || '>'} {rule.right_value?.toFixed(2) ?? ''}
+                      </span>
+                    ) : (
+                      <span>Şart durumu izleniyor</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 shrink-0">
+                  <span className="text-xs font-mono font-bold text-slate-400">
+                    +{rule.score_impact}p
+                  </span>
+                  {rule.passed ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-slate-600" />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}

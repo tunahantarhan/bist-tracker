@@ -20,6 +20,30 @@ interface ChartWrapperProps {
   height?: number;
 }
 
+// Turkey Standard Time offset (UTC+3 = 3 hours = 10,800 seconds)
+const TRT_OFFSET_SECONDS = 3 * 3600;
+
+// Converts raw time strings/numbers into Unix seconds shifted by TRT offset for intraday frames
+function formatChartTime(time: string | number): number {
+  let timestampSeconds = 0;
+
+  if (typeof time === 'number') {
+    timestampSeconds = time > 1e11 ? Math.floor(time / 1000) : Math.floor(time);
+  } else if (typeof time === 'string') {
+    const parsed = Date.parse(time);
+    if (!isNaN(parsed)) {
+      timestampSeconds = Math.floor(parsed / 1000);
+    } else {
+      timestampSeconds = Math.floor(new Date(time).getTime() / 1000) || 0;
+    }
+  }
+
+  // Apply +3h shift only for intraday candles (with colons) so daily candles stay on proper dates
+  const isIntraday = typeof time === 'number' || (typeof time === 'string' && time.includes(':'));
+
+  return isIntraday ? timestampSeconds + TRT_OFFSET_SECONDS : timestampSeconds;
+}
+
 export default function ChartWrapper({
   candles,
   indicators = [],
@@ -72,7 +96,7 @@ export default function ChartWrapper({
     setVisibleNames(updated);
   };
 
-  // Graphical construction and data updates are handled in a single useEffect to avoid unnecessary re-renders and to maintain chart state (like zoom level) across data updates.
+  // Graphical construction and data updates are handled in a single useEffect to avoid unnecessary re-renders
   useEffect(() => {
     if (!mainChartContainerRef.current) return;
 
@@ -117,7 +141,7 @@ export default function ChartWrapper({
 
         trendSeries = rsiChart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
 
-        // RSI and Main Graph Synchronization
+        // Synchronize Visible Ranges between RSI chart and Main candlestick chart
         mainChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
           if (range && rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
         });
@@ -129,17 +153,19 @@ export default function ChartWrapper({
       chartRefs.current = { mainChart, candleSeries, indicatorSeries: {}, rsiChart, rsiSeries, trendSeries };
     }
 
-    // 2nd stage: Update the existing chart with new data (do not destroy the chart to preserve zoom and pan state)
+    // 2nd stage: Update the existing chart with new data without resetting zoom/pan state
     const refs = chartRefs.current;
 
     if (candles && candles.length > 0) {
       const mappedCandles = candles.map((c) => ({
-        time: Math.floor(new Date(c.time).getTime() / 1000) as any,
-        open: c.open, high: c.high, low: c.low, close: c.close,
+        time: formatChartTime(c.time) as any,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
       }));
       const uniqueCandles = Array.from(new Map(mappedCandles.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
       
-      // Inject only the data, do not reset zoom
       refs.candleSeries.setData(uniqueCandles);
     }
 
@@ -151,7 +177,10 @@ export default function ChartWrapper({
               color: ind.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: true,
             });
           }
-          const mappedLine = ind.data.map((d) => ({ time: Math.floor(new Date(d.time).getTime() / 1000) as any, value: d.value }));
+          const mappedLine = ind.data.map((d) => ({
+            time: formatChartTime(d.time) as any,
+            value: d.value,
+          }));
           const uniqueLine = Array.from(new Map(mappedLine.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
           refs.indicatorSeries[ind.name].setData(uniqueLine);
         } else if (refs.indicatorSeries[ind.name]) {
@@ -163,21 +192,25 @@ export default function ChartWrapper({
 
     if (rsiPane && refs.rsiChart) {
       if (rsiPane.rsi && rsiPane.rsi.length > 0) {
-        const mappedRsi = rsiPane.rsi.map((d) => ({ time: Math.floor(new Date(d.time).getTime() / 1000) as any, value: d.value }));
+        const mappedRsi = rsiPane.rsi.map((d) => ({
+          time: formatChartTime(d.time) as any,
+          value: d.value,
+        }));
         const uniqueRsi = Array.from(new Map(mappedRsi.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
         refs.rsiSeries.setData(uniqueRsi);
       }
       if (rsiPane.trendline && rsiPane.trendline.length > 1) {
-        const mappedTrend = rsiPane.trendline.map((d) => ({ time: Math.floor(new Date(d.time).getTime() / 1000) as any, value: d.value }));
+        const mappedTrend = rsiPane.trendline.map((d) => ({
+          time: formatChartTime(d.time) as any,
+          value: d.value,
+        }));
         const uniqueTrend = Array.from(new Map(mappedTrend.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
         refs.trendSeries.setData(uniqueTrend);
       }
     }
-
-    // NOTE: We do not return and call `remove()` here! The chart continues to live.
   }, [candles, indicators, rsiPane, height, visibleNames]); 
 
-  // 3rd stage: When the component is completely unmounted, clean up
+  // 3rd stage: Cleanup chart instances when component unmounts
   useEffect(() => {
     return () => {
       if (chartRefs.current) {
