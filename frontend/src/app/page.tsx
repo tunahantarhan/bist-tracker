@@ -17,10 +17,10 @@ export default function LandingPage() {
           <span className="font-bold text-slate-100 tracking-tight text-lg">BIST Tracker</span>
         </div>
         <div className="flex items-center space-x-4">
-          <Link href="/auth" className="text-sm font-medium text-slate-400 hover:text-slate-200 transition">
+          <Link href="/giris" className="text-sm font-medium text-slate-400 hover:text-slate-200 transition">
             Giriş Yap
           </Link>
-          <Link href="/auth" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_12px_rgba(37,99,235,0.3)] hover:bg-blue-500 transition">
+          <Link href="/giris" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_12px_rgba(37,99,235,0.3)] hover:bg-blue-500 transition">
             Kayıt Ol
           </Link>
         </div>
@@ -46,7 +46,7 @@ export default function LandingPage() {
           </p>
 
           <div className="flex items-center justify-center space-x-4 pt-4">
-            <Link href="/auth" className="flex items-center space-x-2 rounded-lg bg-blue-600 px-8 py-3.5 text-base font-semibold text-white shadow-[0_0_16px_rgba(37,99,235,0.4)] hover:bg-blue-500 transition">
+            <Link href="/giris" className="flex items-center space-x-2 rounded-lg bg-blue-600 px-8 py-3.5 text-base font-semibold text-white shadow-[0_0_16px_rgba(37,99,235,0.4)] hover:bg-blue-500 transition">
               <span>Hemen Başla</span>
               <ChevronRight className="h-5 w-5" />
             </Link>

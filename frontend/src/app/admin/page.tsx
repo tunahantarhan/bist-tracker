@@ -87,11 +87,11 @@ export default function AdminDashboard() {
     const token = localStorage.getItem('access_token');
     const isAdmin = localStorage.getItem('is_admin') === 'true';
     if (!token) {
-      router.push('/auth');
+      router.push('/giris');
       return;
     }
     if (!isAdmin) {
-      router.push('/dashboard');
+      router.push('/ana-sayfa');
       return;
     }
     loadRules();
@@ -237,7 +237,7 @@ export default function AdminDashboard() {
     localStorage.removeItem('access_token');
     localStorage.removeItem('user_slug');
     localStorage.removeItem('is_admin');
-    window.location.href = '/auth';
+    window.location.href = '/giris';
   };
 
   return (
@@ -265,7 +265,7 @@ export default function AdminDashboard() {
         <nav className="flex flex-row md:flex-col overflow-x-auto p-3 md:py-6 md:px-4 space-x-2 md:space-x-0 md:space-y-2 scrollbar-hide shrink-0">
           <button 
             type="button"
-            onClick={() => { window.location.href = '/dashboard'; }} 
+            onClick={() => { window.location.href = '/ana-sayfa'; }} 
             className="shrink-0 whitespace-nowrap w-auto md:w-full flex items-center space-x-3 px-4 py-2.5 md:py-3 rounded-lg text-slate-400 hover:bg-slate-800/60 hover:text-slate-100 transition-all duration-200 cursor-pointer"
           >
             <LayoutDashboard className="h-4 w-4" />

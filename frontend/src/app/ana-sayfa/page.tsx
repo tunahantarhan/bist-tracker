@@ -373,16 +373,13 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Initial dashboard setup (runs only on initial page load)
+  // Initial dashboard setup (runs only on initial page load - leaving initial stock selection empty)
   const initializeDashboard = useCallback(async () => {
-    // 1. Fetch Watchlist independently (renders in ~10ms)
+    // 1. Fetch Watchlist independently (renders in ~10ms without selecting)
     fetchWatchlist()
       .then((data) => {
         const symbols = data.map((item: any) => item.symbol);
         setWatchlist(symbols);
-        if (symbols.length > 0) {
-          setSelectedSymbol((curr) => curr || symbols[0]);
-        }
       })
       .catch((err) => console.warn('Watchlist init warning:', err));
 
@@ -395,7 +392,7 @@ export default function DashboardPage() {
     // 3. Fetch primary rule configuration and sync initial chart timeframe & period
     await refreshPrimaryFilterTimeframe(true);
 
-    // 4. Fetch Overview (RSI and Top Scored lists)
+    // 4. Fetch Overview (RSI and Top Scored lists without auto selecting first stock)
     try {
       const ov = await fetchMarketOverview();
       setOverview(ov);
@@ -409,10 +406,6 @@ export default function DashboardPage() {
 
       setStockScores(scoresMap);
       setDynamicNames(namesMap);
-
-      if (ov.top_scored.length > 0) {
-        setSelectedSymbol((curr) => curr || ov.top_scored[0].symbol);
-      }
     } catch (err) {
       console.warn('Overview init warning:', err);
     } finally {
@@ -445,7 +438,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const token = localStorage.getItem('access_token');
     if (!token) {
-      router.push('/auth');
+      router.push('/giris');
       return;
     }
     setIsAuthenticated(true);
@@ -635,7 +628,14 @@ export default function DashboardPage() {
         {isMobileSearchOpen ? (
           <div className="flex items-center w-full gap-3 animate-in fade-in duration-200">
              <div className="flex-1 w-full">
-               <StockSearch userWatchlist={watchlist} onToggleWatchlist={handleToggleWatchlist} />
+               <StockSearch 
+                 userWatchlist={watchlist} 
+                 onToggleWatchlist={handleToggleWatchlist} 
+                 onSelectStock={(sym) => {
+                   handleSelectStockWithScroll(sym);
+                   setIsMobileSearchOpen(false);
+                 }}
+               />
              </div>
              <button 
                onClick={() => setIsMobileSearchOpen(false)} 
@@ -654,7 +654,11 @@ export default function DashboardPage() {
                 <span className="hidden sm:inline font-semibold text-slate-100 tracking-tight">BIST Tracker</span>
               </div>
               <div className="hidden sm:block w-64">
-                 <StockSearch userWatchlist={watchlist} onToggleWatchlist={handleToggleWatchlist} />
+                 <StockSearch 
+                   userWatchlist={watchlist} 
+                   onToggleWatchlist={handleToggleWatchlist} 
+                   onSelectStock={handleSelectStockWithScroll}
+                 />
               </div>
             </div>
 
@@ -717,7 +721,7 @@ export default function DashboardPage() {
                         setIsProfileMenuOpen(false);
                         localStorage.removeItem('access_token');
                         localStorage.removeItem('is_admin');
-                        router.push('/auth');
+                        router.push('/giris');
                       }}
                       className="w-full flex items-center py-2 px-2.5 rounded-md bg-rose-950/30 text-rose-400 border border-rose-500/10 hover:!bg-rose-900/45 text-xs text-left cursor-pointer transition-colors mt-1"
                     >
@@ -903,9 +907,16 @@ export default function DashboardPage() {
             {/* Chart Container Card */}
             <div ref={chartSectionRef} className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-4 sm:p-5 shadow-2xl backdrop-blur-md flex flex-col">
               {!selectedSymbol ? (
-                <div className="h-[450px] flex flex-col items-center justify-center text-slate-500">
-                  <Activity className="h-12 w-12 mb-4 opacity-20" />
-                  <p>Grafik verisi hazırlanıyor...</p>
+                <div className="min-h-[460px] flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/90 rounded-xl bg-[#161b26]/30">
+                  <div className="h-14 w-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-4 text-blue-400 shadow-[0_0_20px_rgba(37,99,235,0.15)]">
+                    <SlidersHorizontal className="h-7 w-7 opacity-80" />
+                  </div>
+                  <h3 className="text-base font-semibold text-slate-200 tracking-tight">
+                    İncelemek İçin Bir Hisse Seçin
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1.5 max-w-sm leading-relaxed">
+                    Arama çubuğundan, listelerden veya RSI kırılım filtresinden dilediğiniz hisseye tıklayarak teknik analizini ve kural karnesini görüntüleyin.
+                  </p>
                 </div>
               ) : (
                 <>

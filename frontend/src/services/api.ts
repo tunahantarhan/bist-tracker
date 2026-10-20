@@ -35,7 +35,7 @@ async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Re
   }
 
   if (res.status === 401 && typeof window !== 'undefined') {
-    if (!window.location.pathname.startsWith('/auth')) {
+    if (!window.location.pathname.startsWith('/giris')) {
       window.dispatchEvent(new CustomEvent('session-expired'));
     }
     throw new Error('Oturum süreniz doldu.');

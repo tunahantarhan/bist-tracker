@@ -63,7 +63,7 @@ export default function AuthPage() {
         }
         localStorage.setItem('access_token', data.access_token);
         localStorage.setItem('is_admin', data.is_admin ? 'true' : 'false');
-        window.location.href = '/dashboard';
+        window.location.href = '/ana-sayfa';
       } else {
         showToast("Kayıt başarılı! Şimdi giriş yapabilirsiniz.", "success");
         setIsLogin(true);

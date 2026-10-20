@@ -32,7 +32,7 @@ export default function SessionGuard() {
   const [expired, setExpired] = useState(false);
   const hadTokenRef = useRef(false);
 
-  const isPublicRoute = pathname === '/' || pathname?.startsWith('/auth');
+  const isPublicRoute = pathname === '/' || pathname?.startsWith('/giris');
 
   const clearSessionStorage = () => {
     localStorage.removeItem('access_token');
@@ -57,7 +57,7 @@ export default function SessionGuard() {
 
     if (!initialToken) {
       if (!expired) {
-        router.replace('/auth');
+        router.replace('/giris');
       }
       return;
     }
@@ -105,7 +105,7 @@ export default function SessionGuard() {
   const handleRedirectToAuth = () => {
     clearSessionStorage();
     setExpired(false);
-    router.push('/auth');
+    router.push('/giris');
   };
 
   if (!expired || isPublicRoute) return null;
