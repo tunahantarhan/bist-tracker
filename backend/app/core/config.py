@@ -7,7 +7,9 @@ class Settings(BaseSettings):
 
     # Auth
     SECRET_KEY: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgrespassword"

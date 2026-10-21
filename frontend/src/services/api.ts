@@ -17,8 +17,26 @@ const getAuthHeaders = () => {
   return headers;
 };
 
+let isRefreshing = false;
+let refreshQueue: Array<{
+  resolve: (value?: unknown) => void;
+  reject: (reason?: unknown) => void;
+}> = [];
+
+const processRefreshQueue = (error: Error | null, token: string | null = null) => {
+  refreshQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  refreshQueue = [];
+};
+
 async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
   let res: Response;
+
   try {
     res = await fetch(url, {
       ...options,
@@ -34,11 +52,70 @@ async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Re
     throw new Error('Sunucuya bağlanılamadı. Lütfen biraz bekleyip tekrar deneyin.');
   }
 
+  // Handle 401 with silent token refresh
   if (res.status === 401 && typeof window !== 'undefined') {
-    if (!window.location.pathname.startsWith('/giris')) {
-      window.dispatchEvent(new CustomEvent('session-expired'));
+    const refreshToken = localStorage.getItem('refresh_token');
+
+    // If no refresh token exists, redirect to login
+    if (!refreshToken) {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      if (!window.location.pathname.startsWith('/giris')) {
+        window.location.href = '/giris';
+      }
+      throw new Error('Oturum süreniz doldu.');
     }
-    throw new Error('Oturum süreniz doldu.');
+
+    // Queue concurrent requests while a refresh is in progress
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        refreshQueue.push({ resolve, reject });
+      })
+        .then(() => fetchWithAuth(url, options))
+        .catch((err) => Promise.reject(err));
+    }
+
+    isRefreshing = true;
+
+    try {
+      const refreshResponse = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (!refreshResponse.ok) {
+        throw new Error('Refresh token expired');
+      }
+
+      const refreshData = await refreshResponse.json();
+      localStorage.setItem('access_token', refreshData.access_token);
+      if (refreshData.refresh_token) {
+        localStorage.setItem('refresh_token', refreshData.refresh_token);
+      }
+
+      processRefreshQueue(null, refreshData.access_token);
+
+      // Retry the original request with the new access token
+      return await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${refreshData.access_token}`,
+        },
+      });
+    } catch (refreshErr) {
+      processRefreshQueue(refreshErr as Error, null);
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      if (!window.location.pathname.startsWith('/giris')) {
+        window.location.href = '/giris';
+      }
+      throw new Error('Oturum süreniz doldu.');
+    } finally {
+      isRefreshing = false;
+    }
   }
 
   return res;

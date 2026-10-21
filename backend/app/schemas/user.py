@@ -34,4 +34,12 @@ class UserResponse(UserBase):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str
+    refresh_token: str
+    token_type: str = "bearer"
+    first_name: str | None = None
+    last_name: str | None = None
+    is_admin: bool = False
+
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str

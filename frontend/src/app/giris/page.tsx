@@ -62,6 +62,9 @@ export default function AuthPage() {
           localStorage.setItem('user_slug', `${data.first_name.toLowerCase()}-${data.last_name.toLowerCase()}`);
         }
         localStorage.setItem('access_token', data.access_token);
+        if (data.refresh_token) {
+          localStorage.setItem('refresh_token', data.refresh_token);
+        }
         localStorage.setItem('is_admin', data.is_admin ? 'true' : 'false');
         window.location.href = '/ana-sayfa';
       } else {
