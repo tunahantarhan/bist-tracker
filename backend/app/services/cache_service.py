@@ -46,7 +46,7 @@ class CacheService:
         """Serializes and caches data in Redis with TTL."""
         try:
             payload = json.dumps(data)
-            await redis_client.setex(key, expiration, payload)
+            await redis_client.setex(key, int(expiration), payload)
         except Exception as e:
             print(f"[CACHE WARNING] Redis write error (JSON): {e}")
 

@@ -1,9 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api.routers import auth, market, rules, watchlist, notifications
+from app.api.routers import auth, market, rules, watchlist, notifications, alerts
 from app.scheduler.main import start_scheduler
-from app.api.routers import alerts
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,6 +31,7 @@ app.include_router(market.router, prefix="/api/v1")
 app.include_router(rules.router, prefix="/api/v1")
 app.include_router(watchlist.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
+app.include_router(alerts.router, prefix="/api/v1")
 
 
 @app.get("/health")

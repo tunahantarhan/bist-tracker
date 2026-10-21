@@ -7,6 +7,7 @@ from sqlalchemy import select
 import pandas as pd
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
+from datetime import datetime, timezone, timedelta
 
 from app.core.database import get_db
 from app.models.rule import Rule
@@ -482,12 +483,12 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                     target_rule = rules_by_id.get(alert_obj.rule_id)
                     rule_passed = False
 
-                    # Eğer kural ID yoksa veya kural birincil RSI filtresiyse
+                    # If there is no rule ID or the rule is the primary RSI filter
                     if alert_obj.rule_id is None or (target_rule and getattr(target_rule, "is_primary_filter", False)):
                         rule_passed = stock_item.get("primary_filter_passed", False)
                         rule_name = getattr(target_rule, "name", "RSI Düşen Trend Kırılımı")
                     else:
-                        # Seçilen özel kuralın karnedeki durumunu kontrol et
+                        # Check the status of the choosen stock on the evaluation brekdown
                         rb_item = next(
                             (rb for rb in stock_item.get("rules_breakdown", []) if rb.get("id") == alert_obj.rule_id),
                             None
@@ -495,12 +496,33 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                         if rb_item and (rb_item.get("is_met") or rb_item.get("passed")):
                             rule_passed = True
                         rule_name = getattr(target_rule, "name", f"Kural #{alert_obj.rule_id}")
+                    
+                    # Turkiye timezone
+                    TR_TZ = timezone(timedelta(hours=3))
+                    now_tr = datetime.now(TR_TZ).replace(tzinfo=None)
+                    
+                    alert_tf = alert_obj.timeframe or getattr(target_rule, "timeframe", "15m")
+                    cooldown_map = {
+                        "5m": timedelta(hours=1),
+                        "15m": timedelta(hours=2),
+                        "1h": timedelta(hours=4),
+                        "4h": timedelta(hours=8),
+                        "1d": timedelta(hours=24),
+                    }
+                    cooldown_delta = cooldown_map.get(alert_tf.lower(), timedelta(hours=4))
 
-                    # Şart sağlandıysa kullanıcıya özel bildirim ve mail at (cooldown korumalı)
+                    if alert_obj.last_triggered_at:
+                        last_trigger = alert_obj.last_triggered_at
+                        if last_trigger.tzinfo is not None:
+                            last_trigger = last_trigger.replace(tzinfo=None)
+
+                        if now_tr - last_trigger < cooldown_delta:
+                            continue
+
+                    # If rule is met, send a custom notification and email to the user (with cooldown protection)
                     if rule_passed:
                         price = stock_item["current_price"]
-                        alert_tf = alert_obj.timeframe or getattr(target_rule, "timeframe", "15m")
-                        custom_msg = f"[ÖZEL ALARM] Takip ettiğiniz {alert_obj.symbol} hissesinde '{rule_name}' kuralı sağlandı! Güncel Fiyat: ₺{price:.2f}"
+                        custom_msg = f"Takip ettiğiniz {alert_obj.symbol} hissesinde '{rule_name}' kuralı sağlandı! Güncel Fiyat: ₺{price:.2f}"
 
                         try:
                             await notif_service.trigger_notification(
@@ -511,8 +533,15 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                                 user_email=uemail,
                                 timeframe=alert_tf
                             )
+
+                            alert_obj.last_triggered_at = now_tr
+                            db.add(alert_obj)
+                            await db.commit()
+                            print(f"[CUSTOM ALARM] {alert_obj.symbol} alarmı tetiklendi (GMT+3: {now_tr.strftime('%H:%M:%S')}).")
                         except Exception as alert_err:
-                            print(f"[CUSTOM ALARM WARNING] {alert_obj.symbol} kullanıcısına gönderilemedi: {alert_err}")
+                            await db.rollback()
+                            print(f"[CUSTOM ALARM WARNING] {alert_obj.symbol} bildirim hatası: {alert_err}")
+                    
         except Exception as scan_err:
             print(f"[CUSTOM ALARMS SCANNER ERROR]: {scan_err}")
 

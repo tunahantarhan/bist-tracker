@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -11,6 +11,8 @@ from app.models.user import User
 from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/alerts", tags=["User Custom Alerts"])
+
+TR_TZ = timezone(timedelta(hours=3))
 
 
 class AlertCreate(BaseModel):
@@ -37,7 +39,7 @@ async def get_my_alerts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Kullanıcının kayıtlı tüm özel alarmlarını listeler."""
+    """Lists all configured custom alerts for the current authenticated user."""
     res = await db.execute(
         select(UserCustomAlert)
         .where(UserCustomAlert.user_id == current_user.id)
@@ -52,7 +54,6 @@ async def create_custom_alert(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-        
     clean_sym = alert_in.symbol.strip().upper()
     
     existing = await db.execute(
@@ -70,12 +71,16 @@ async def create_custom_alert(
             detail=f"{clean_sym} için {alert_in.timeframe} periyodunda zaten aktif bir alarmınız var."
         )
 
+    # Use Turkey Time (GMT+3) without offset for Postgres compatibility
+    now_tr = datetime.now(TR_TZ).replace(tzinfo=None)
+
     new_alert = UserCustomAlert(
         user_id=current_user.id,
         symbol=clean_sym,
         rule_id=alert_in.rule_id,
         timeframe=alert_in.timeframe or "15m",
-        is_active=True
+        is_active=True,
+        created_at=now_tr
     )
     db.add(new_alert)
     await db.commit()
@@ -89,7 +94,7 @@ async def delete_alert_by_symbol(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Removes the alert according to the symbol name (for the toggle on the detail page)."""
+    """Removes the alert by symbol name (used for toggle action on detail view)."""
     clean_sym = symbol.strip().upper()
     res = await db.execute(
         select(UserCustomAlert).where(
@@ -114,7 +119,7 @@ async def delete_alert(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Alert deletion with ID"""
+    """Deletes custom alert by its primary key ID."""
     res = await db.execute(
         select(UserCustomAlert).where(
             and_(

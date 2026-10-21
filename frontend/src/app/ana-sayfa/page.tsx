@@ -268,7 +268,8 @@ export default function DashboardPage() {
     setPriceFlash(null);
     setScoreFlash(null);
     setSelectedSymbol(symbol);
-    if (chartSectionRef.current) {
+
+    if (typeof window !== 'undefined' && window.innerWidth < 1024 && chartSectionRef.current) {
       chartSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
