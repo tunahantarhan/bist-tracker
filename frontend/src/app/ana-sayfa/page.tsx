@@ -86,6 +86,41 @@ const formatTfFullText = (tf?: string) => {
   return map[tf.toLowerCase()] || tf;
 };
 
+// Helper function to render human-readable condition text and reference values
+function renderConditionText(rule: any) {
+  const curVal = rule.current_value ?? rule.left_value;
+  const targetVal = rule.target_value ?? rule.right_value;
+  const formattedCur = curVal !== undefined && curVal !== null ? Number(curVal).toFixed(2) : null;
+  const formattedTarget = targetVal !== undefined && targetVal !== null ? Number(targetVal).toFixed(2) : null;
+  const cond = rule.condition || '>';
+
+  // 1. If rule is an RSI range (e.g. RSI 0-30)
+  if (rule.name?.includes('(0-30)') || rule.name?.toLowerCase().includes('aşırı satım')) {
+    if (formattedCur !== null) {
+      return (
+        <span>
+          Anlık RSI: <strong className="text-slate-200">{formattedCur}</strong>{' '}
+          <span className="text-slate-500">| Hedef Aralık:</span>{' '}
+          <strong className="text-amber-400">[0 - 30]</strong>
+        </span>
+      );
+    }
+  }
+
+  // 2. Standard comparison rule (e.g. MA(9) > MA(14))
+  if (formattedCur !== null && formattedTarget !== null) {
+    return (
+      <span>
+        Anlık: <strong className="text-slate-200">{formattedCur}</strong>{' '}
+        <span className="text-slate-500">{cond}</span>{' '}
+        Referans: <strong className="text-slate-200">{formattedTarget}</strong>
+      </span>
+    );
+  }
+
+  return <span className="text-slate-500">Şart durumu izleniyor</span>;
+}
+
 interface TopPricedRowProps {
   item: TickerItem;
   rank: number;
@@ -141,6 +176,9 @@ export default function DashboardPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   
   const [watchlist, setWatchlist] = useState<string[]>([]);
+  // Mutex state to prevent race conditions during rapid watchlist additions/removals
+  const [watchlistPending, setWatchlistPending] = useState<Record<string, boolean>>({});
+
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const selectedSymbolRef = useRef<string | null>(null);
 
@@ -476,6 +514,11 @@ export default function DashboardPage() {
   }, [isAuthenticated, chartConfig, loadMarket, refreshOverview]);
 
   const handleToggleWatchlist = async (symbol: string, isAdded: boolean) => {
+    // Prevent duplicate triggers if action is already in-flight for this symbol
+    if (watchlistPending[symbol]) return;
+
+    setWatchlistPending((prev) => ({ ...prev, [symbol]: true }));
+
     try {
       if (isAdded) {
         await removeFromWatchlist(symbol);
@@ -486,7 +529,15 @@ export default function DashboardPage() {
         handleSelectStockWithScroll(symbol);
         setIsMobileSearchOpen(false);
       }
-    } catch (err: any) { alert(err.message); }
+    } catch (err: any) { 
+      alert(err.message); 
+    } finally {
+      setWatchlistPending((prev) => {
+        const next = { ...prev };
+        delete next[symbol];
+        return next;
+      });
+    }
   };
 
   const handleIntervalChange = (newInterval: string) => {
@@ -671,6 +722,7 @@ export default function DashboardPage() {
                       onClick={() => {
                         setIsProfileMenuOpen(false);
                         localStorage.removeItem('access_token');
+                        localStorage.removeItem('refresh_token');
                         localStorage.removeItem('is_admin');
                         router.push('/giris');
                       }}
@@ -724,6 +776,8 @@ export default function DashboardPage() {
                       watchlist.map((symbol) => {
                         const isSelected = selectedSymbol === symbol;
                         const symScore = stockScores[symbol];
+                        const isMutating = !!watchlistPending[symbol];
+
                         return (
                           <div 
                             key={symbol} 
@@ -745,15 +799,20 @@ export default function DashboardPage() {
                                 {symScore !== undefined ? symScore.toFixed(2) : '--'}
                               </span>
                               <button 
+                                disabled={isMutating}
                                 onClick={(e) => { 
                                   e.preventDefault(); 
                                   e.stopPropagation(); 
                                   handleToggleWatchlist(symbol, true); 
                                 }} 
                                 title="Takip Listesinden Çıkar"
-                                className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors cursor-pointer"
+                                className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                {isMutating ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -887,9 +946,10 @@ export default function DashboardPage() {
                           </a>
 
                           <button
+                            disabled={watchlistPending[selectedSymbol!]}
                             onClick={() => handleToggleWatchlist(selectedSymbol!, watchlist.includes(selectedSymbol!))}
                             title={watchlist.includes(selectedSymbol!) ? "Takip Listesinden Çıkar" : "Takip Listesine Ekle"}
-                            className={`h-7 w-7 sm:h-8 sm:w-8 mt-1 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer shadow-sm ${
+                            className={`h-7 w-7 sm:h-8 sm:w-8 mt-1 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
                               watchlist.includes(selectedSymbol!)
                                 ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/40 hover:scale-105'
                                 : 'bg-slate-800 text-slate-400 hover:bg-blue-600 hover:text-white hover:scale-105'
@@ -1141,7 +1201,7 @@ export default function DashboardPage() {
         </div>
       </main>
 
-      {/* Rules Breakdown Drawer */}
+      {/* Rules Breakdown Drawer with Clarified Condition Text */}
       {isRuleDrawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="fixed inset-0" onClick={() => setIsRuleDrawerOpen(false)} />
@@ -1167,13 +1227,7 @@ export default function DashboardPage() {
                         <span className="font-semibold truncate">{rule.name}</span>
                         <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
                           <span className="bg-slate-800/80 px-1.5 py-0.5 rounded">{rule.timeframe?.toUpperCase()}</span>
-                          {rule.current_value !== undefined && (
-                            <span className="flex items-center space-x-1">
-                              <span>Anlık: <strong className="text-slate-300">{Number(rule.current_value).toFixed(2)}</strong></span>
-                              <span className="text-slate-500">{rule.condition || '>'}</span>
-                              <span>Hedef: <strong className="text-slate-300">{Number(rule.target_value).toFixed(2)}</strong></span>
-                            </span>
-                          )}
+                          {renderConditionText(rule)}
                         </div>
                       </div>
                     </div>

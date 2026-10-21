@@ -89,6 +89,41 @@ const TIMEFRAME_OPTIONS = [
   { label: '1 G', value: '1d', period: '1y' },
 ];
 
+// Helper function to render human-readable condition text and reference values
+function renderConditionText(rule: RuleBreakdownItem) {
+  const curVal = rule.current_value ?? rule.left_value;
+  const targetVal = rule.target_value ?? rule.right_value;
+  const formattedCur = curVal !== undefined && curVal !== null ? Number(curVal).toFixed(2) : null;
+  const formattedTarget = targetVal !== undefined && targetVal !== null ? Number(targetVal).toFixed(2) : null;
+  const cond = rule.condition || '>';
+
+  // 1. If rule is an RSI range (e.g. RSI 0-30)
+  if (rule.name?.includes('(0-30)') || rule.name?.toLowerCase().includes('aşırı satım')) {
+    if (formattedCur !== null) {
+      return (
+        <span>
+          Anlık RSI: <strong className="text-slate-200">{formattedCur}</strong>{' '}
+          <span className="text-slate-500">| Hedef Aralık:</span>{' '}
+          <strong className="text-amber-400">[0 - 30]</strong>
+        </span>
+      );
+    }
+  }
+
+  // 2. Standard comparison rule (e.g. MA(9) > MA(14))
+  if (formattedCur !== null && formattedTarget !== null) {
+    return (
+      <span>
+        Anlık: <strong className="text-slate-200">{formattedCur}</strong>{' '}
+        <span className="text-slate-500">{cond}</span>{' '}
+        Referans: <strong className="text-slate-200">{formattedTarget}</strong>
+      </span>
+    );
+  }
+
+  return <span className="text-slate-500">Şart durumu izleniyor</span>;
+}
+
 export default function StockDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -265,8 +300,6 @@ export default function StockDetailPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {data?.rules_breakdown?.map((rule) => {
               const isMet = rule.is_met ?? rule.passed ?? false;
-              const curVal = rule.current_value ?? rule.left_value;
-              const targetVal = rule.target_value ?? rule.right_value;
               const scoreVal = isMet ? (rule.earned_score ?? rule.score_impact ?? 0) : 0;
 
               return (
@@ -286,15 +319,7 @@ export default function StockDetailPage() {
                       </span>
                     </div>
                     <div className="text-[11px] font-mono text-slate-400">
-                      {curVal !== undefined && curVal !== null ? (
-                        <span>
-                          Anlık: <strong className="text-slate-200">{Number(curVal).toFixed(2)}</strong>{' '}
-                          <span className="text-slate-500">{rule.condition || '>'}</span>{' '}
-                          Hedef: <strong className="text-slate-200">{targetVal !== undefined && targetVal !== null ? Number(targetVal).toFixed(2) : '-'}</strong>
-                        </span>
-                      ) : (
-                        <span className="text-slate-500">Şart durumu izleniyor</span>
-                      )}
+                      {renderConditionText(rule)}
                     </div>
                   </div>
 

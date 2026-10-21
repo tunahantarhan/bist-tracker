@@ -14,6 +14,7 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.user import UserCreate, UserLogin, UserResponse, Token, TokenRefreshRequest
+from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -101,3 +102,8 @@ async def refresh_access_token(body: TokenRefreshRequest, db: AsyncSession = Dep
         "last_name": user.last_name,
         "is_admin": bool(getattr(user, "is_admin", False)),
     }
+
+@router.get("/me", response_model=UserResponse)
+async def get_my_profile(current_user: User = Depends(get_current_user)):
+    """Returns the profile of the currently authenticated user."""
+    return current_user
