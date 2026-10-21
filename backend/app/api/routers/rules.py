@@ -18,6 +18,7 @@ from app.api.routers.market import TICKER_INFO
 from app.models.universe import UniverseStock
 from app.services.notification_service import NotificationService
 from app.models.user import User
+from app.models.alert import UserCustomAlert
 
 router = APIRouter(tags=["Rules & Market"])
 provider = YFinanceProvider()
@@ -392,6 +393,7 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                         "score": eval_res["total_score"],
                         "primary_filter_passed": eval_res["primary_filter_passed"],
                         "has_primary_filter": eval_res["has_primary_filter"],
+                        "rules_breakdown": eval_res.get("rules_breakdown", []),
                     }
                 except Exception as e:
                     print(f"Overview scan skipped for {sym}: {e}")
@@ -455,6 +457,64 @@ async def get_market_overview(db: AsyncSession = Depends(get_db)):
                         )
                     except Exception as e:
                         print(f"[NOTIF WARNING] Failed to trigger notification for {sym} to user {uid}: {e}")
+
+        try:
+            custom_alerts_res = await db.execute(
+                select(UserCustomAlert, User.email)
+                .join(User, UserCustomAlert.user_id == User.id)
+                .where(
+                    UserCustomAlert.is_active == True,
+                    User.is_active == True
+                )
+            )
+            custom_alerts = custom_alerts_res.all()
+
+            if custom_alerts:
+                notif_service = NotificationService(db)
+                items_by_symbol = {item["symbol"]: item for item in valid_items}
+                rules_by_id = {r.id: r for r in active_rules}
+
+                for alert_obj, uemail in custom_alerts:
+                    stock_item = items_by_symbol.get(alert_obj.symbol)
+                    if not stock_item:
+                        continue
+
+                    target_rule = rules_by_id.get(alert_obj.rule_id)
+                    rule_passed = False
+
+                    # Eğer kural ID yoksa veya kural birincil RSI filtresiyse
+                    if alert_obj.rule_id is None or (target_rule and getattr(target_rule, "is_primary_filter", False)):
+                        rule_passed = stock_item.get("primary_filter_passed", False)
+                        rule_name = getattr(target_rule, "name", "RSI Düşen Trend Kırılımı")
+                    else:
+                        # Seçilen özel kuralın karnedeki durumunu kontrol et
+                        rb_item = next(
+                            (rb for rb in stock_item.get("rules_breakdown", []) if rb.get("id") == alert_obj.rule_id),
+                            None
+                        )
+                        if rb_item and (rb_item.get("is_met") or rb_item.get("passed")):
+                            rule_passed = True
+                        rule_name = getattr(target_rule, "name", f"Kural #{alert_obj.rule_id}")
+
+                    # Şart sağlandıysa kullanıcıya özel bildirim ve mail at (cooldown korumalı)
+                    if rule_passed:
+                        price = stock_item["current_price"]
+                        alert_tf = alert_obj.timeframe or getattr(target_rule, "timeframe", "15m")
+                        custom_msg = f"[ÖZEL ALARM] Takip ettiğiniz {alert_obj.symbol} hissesinde '{rule_name}' kuralı sağlandı! Güncel Fiyat: ₺{price:.2f}"
+
+                        try:
+                            await notif_service.trigger_notification(
+                                user_id=alert_obj.user_id,
+                                symbol=alert_obj.symbol,
+                                message=custom_msg,
+                                rule_id=alert_obj.rule_id,
+                                user_email=uemail,
+                                timeframe=alert_tf
+                            )
+                        except Exception as alert_err:
+                            print(f"[CUSTOM ALARM WARNING] {alert_obj.symbol} kullanıcısına gönderilemedi: {alert_err}")
+        except Exception as scan_err:
+            print(f"[CUSTOM ALARMS SCANNER ERROR]: {scan_err}")
 
         return sanitized_payload
     

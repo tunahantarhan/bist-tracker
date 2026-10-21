@@ -4,19 +4,24 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
-  ArrowLeft, Bell, BellOff, CheckCircle2, XCircle, 
+  ArrowLeft, CheckCircle2, XCircle, 
   TrendingUp, TrendingDown, ShieldCheck, ChevronRight 
 } from 'lucide-react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
+import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
 import { API_URL } from '@/services/api';
 
 interface RuleBreakdownItem {
   id: number;
   name: string;
   timeframe: string;
-  is_primary_filter: boolean;
-  score_impact: number;
-  passed: boolean;
+  is_primary_filter?: boolean;
+  score_impact?: number;
+  earned_score?: number;
+  is_met?: boolean;
+  passed?: boolean;
+  current_value?: number | null;
+  target_value?: number | null;
   left_value?: number | null;
   right_value?: number | null;
   condition?: string;
@@ -37,8 +42,9 @@ interface StockDetailData {
   rsiPane: any;
 }
 
-// BIST Şirket İsimleri Sözlüğü (Backend gecikse dahi anında gösterir)
 const BIST_COMPANY_NAMES: Record<string, string> = {
+  KORDS: "Kordsa Teknik Tekstil A.Ş.",
+  AYDEM: "Aydem Yenilenebilir Enerji A.Ş.",
   VESTL: "Vestel Elektronik Sanayi ve Ticaret A.Ş.",
   THYAO: "Türk Hava Yolları A.O.",
   ASELS: "Aselsan Elektronik Sanayi ve Ticaret A.Ş.",
@@ -76,11 +82,11 @@ const BIST_COMPANY_NAMES: Record<string, string> = {
 };
 
 const TIMEFRAME_OPTIONS = [
-  { label: '5Dk', value: '5m', period: '1mo' },
-  { label: '15Dk', value: '15m', period: '1mo' },
-  { label: '1S', value: '1h', period: '3mo' },
-  { label: '4S', value: '4h', period: '6mo' },
-  { label: '1G', value: '1d', period: '1y' },
+  { label: '5 DK', value: '5m', period: '1mo' },
+  { label: '15 DK', value: '15m', period: '1mo' },
+  { label: '1 S', value: '1h', period: '3mo' },
+  { label: '4 S', value: '4h', period: '6mo' },
+  { label: '1 G', value: '1d', period: '1y' },
 ];
 
 export default function StockDetailPage() {
@@ -91,8 +97,6 @@ export default function StockDetailPage() {
   const [timeframe, setTimeframe] = useState<string>('15m');
   const [data, setData] = useState<StockDetailData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [hasCustomAlert, setHasCustomAlert] = useState<boolean>(false);
-  const [alertLoading, setAlertLoading] = useState<boolean>(false);
 
   const handleSmartBack = () => {
     if (typeof window !== 'undefined' && window.history.length > 1 && document.referrer.includes(window.location.host)) {
@@ -136,17 +140,9 @@ export default function StockDetailPage() {
     return () => clearInterval(timer);
   }, [timeframe, fetchStockData]);
 
-  const handleToggleAlert = async () => {
-    setAlertLoading(true);
-    setTimeout(() => {
-      setHasCustomAlert((prev) => !prev);
-      setAlertLoading(false);
-    }, 400);
-  };
-
   return (
     <div className="min-h-screen bg-[#0b0e14] text-slate-100 flex flex-col">
-      {/* Top Navigation Bar */}
+      {/* Top Navigation Bar with sticky blur */}
       <header className="px-4 sm:px-8 py-3.5 border-b border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between">
         <div className="flex items-center space-x-3 sm:space-x-4">
           <button
@@ -166,25 +162,12 @@ export default function StockDetailPage() {
           </div>
         </div>
 
-        {/* Special Alert Button */}
-        <button
-          type="button"
-          onClick={handleToggleAlert}
-          disabled={alertLoading}
-          className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
-            hasCustomAlert
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
-              : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
-          }`}
-        >
-          {hasCustomAlert ? <Bell className="h-3.5 w-3.5 fill-amber-400 text-amber-400" /> : <BellOff className="h-3.5 w-3.5" />}
-          <span>{hasCustomAlert ? 'Alarm Açık (Özel)' : 'Bu Hisse İçin Alarm Kur'}</span>
-        </button>
+        {/* Custom Rule-Specific Alert Dropdown */}
+        <StockAlertDropdown symbol={symbol} />
       </header>
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 space-y-6">
-        {/* Header Ticker Card */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
           <div className="flex items-center space-x-4">
             <div className="h-12 w-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center font-mono font-bold text-blue-400 text-base shrink-0">
@@ -201,7 +184,6 @@ export default function StockDetailPage() {
                   {data?.primary_filter_passed ? 'FİLTRE ONAYLANDI' : 'FİLTRE BEKLENİYOR'}
                 </span>
               </div>
-              {/* Full Name of the Company */}
               <p className="text-xs text-slate-400 mt-1 font-medium truncate max-w-[280px] sm:max-w-md">
                 {companyTitle}
               </p>
@@ -232,7 +214,7 @@ export default function StockDetailPage() {
           </div>
         </div>
 
-        {/* Timeframe Buttons */}
+        {/* Timeframe Selection */}
         <div className="flex items-center space-x-1 bg-[#12161f] p-1 rounded-xl border border-slate-800/80 w-fit">
           {TIMEFRAME_OPTIONS.map((opt) => {
             const isSelected = timeframe === opt.value;
@@ -273,7 +255,7 @@ export default function StockDetailPage() {
           )}
         </div>
 
-        {/* Rule Analysis Report */}
+        {/* Rule Analysis Report - Fully Aligned with Backend Response */}
         <div className="space-y-3">
           <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
             <ShieldCheck className="h-4 w-4 text-blue-400" />
@@ -281,45 +263,54 @@ export default function StockDetailPage() {
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {data?.rules_breakdown?.map((rule) => (
-              <div
-                key={rule.id}
-                className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
-                  rule.passed
-                    ? 'bg-emerald-950/10 border-emerald-500/25'
-                    : 'bg-[#12161f]/40 border-slate-800/80'
-                }`}
-              >
-                <div className="space-y-1 pr-3">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-xs font-semibold text-slate-200">{rule.name}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                      {rule.timeframe?.toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-500">
-                    {rule.left_value !== undefined && rule.left_value !== null ? (
-                      <span>
-                        Değer: <strong className="text-slate-300">{rule.left_value.toFixed(2)}</strong> {rule.condition || '>'} {rule.right_value?.toFixed(2) ?? ''}
+            {data?.rules_breakdown?.map((rule) => {
+              const isMet = rule.is_met ?? rule.passed ?? false;
+              const curVal = rule.current_value ?? rule.left_value;
+              const targetVal = rule.target_value ?? rule.right_value;
+              const scoreVal = isMet ? (rule.earned_score ?? rule.score_impact ?? 0) : 0;
+
+              return (
+                <div
+                  key={rule.id}
+                  className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
+                    isMet
+                      ? 'bg-emerald-950/15 border-emerald-500/30'
+                      : 'bg-[#12161f]/40 border-slate-800/80'
+                  }`}
+                >
+                  <div className="space-y-1.5 pr-3 min-w-0">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-semibold text-slate-200 truncate">{rule.name}</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                        {rule.timeframe?.toUpperCase()}
                       </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-400">
+                      {curVal !== undefined && curVal !== null ? (
+                        <span>
+                          Anlık: <strong className="text-slate-200">{Number(curVal).toFixed(2)}</strong>{' '}
+                          <span className="text-slate-500">{rule.condition || '>'}</span>{' '}
+                          Hedef: <strong className="text-slate-200">{targetVal !== undefined && targetVal !== null ? Number(targetVal).toFixed(2) : '-'}</strong>
+                        </span>
+                      ) : (
+                        <span className="text-slate-500">Şart durumu izleniyor</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 shrink-0 ml-2">
+                    <span className={`text-xs font-mono font-bold ${isMet ? 'text-emerald-400' : 'text-slate-500'}`}>
+                      {isMet ? `+${scoreVal}p` : '0.00'}
+                    </span>
+                    {isMet ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                     ) : (
-                      <span>Şart durumu izleniyor</span>
+                      <XCircle className="h-4 w-4 text-slate-600" />
                     )}
                   </div>
                 </div>
-
-                <div className="flex items-center space-x-2 shrink-0">
-                  <span className="text-xs font-mono font-bold text-slate-400">
-                    +{rule.score_impact}p
-                  </span>
-                  {rule.passed ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-slate-600" />
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </main>

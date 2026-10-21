@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, ReactNode } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { IndicatorOverlay, RsiPaneData } from '@/services/api';
 import { Eye, EyeOff } from 'lucide-react';
@@ -18,6 +18,7 @@ interface ChartWrapperProps {
   indicators?: IndicatorOverlay[];
   rsiPane?: RsiPaneData;
   height?: number;
+  headerAction?: ReactNode; // Optional slot for alert dropdowns or extra controls
 }
 
 // Turkey Standard Time offset (UTC+3 = 3 hours = 10,800 seconds)
@@ -49,6 +50,7 @@ export default function ChartWrapper({
   indicators = [],
   rsiPane,
   height = 320,
+  headerAction,
 }: ChartWrapperProps) {
   const mainChartContainerRef = useRef<HTMLDivElement>(null);
   const rsiChartContainerRef = useRef<HTMLDivElement>(null);
@@ -96,13 +98,13 @@ export default function ChartWrapper({
     setVisibleNames(updated);
   };
 
-  // Graphical construction and data updates are handled in a single useEffect to avoid unnecessary re-renders
+  // Graphical construction and data updates handled in a single useEffect
   useEffect(() => {
     if (!mainChartContainerRef.current) return;
 
     const initialWidth = mainChartContainerRef.current.clientWidth || 600;
 
-    // 1st stage: If the chart does not exist, create it only once (initialize)
+    // 1st stage: If chart does not exist, create it once
     if (!chartRefs.current) {
       const mainChart = createChart(mainChartContainerRef.current, {
         width: initialWidth,
@@ -141,7 +143,7 @@ export default function ChartWrapper({
 
         trendSeries = rsiChart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
 
-        // Synchronize Visible Ranges between RSI chart and Main candlestick chart
+        // Synchronize Visible Ranges
         mainChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
           if (range && rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
         });
@@ -153,7 +155,7 @@ export default function ChartWrapper({
       chartRefs.current = { mainChart, candleSeries, indicatorSeries: {}, rsiChart, rsiSeries, trendSeries };
     }
 
-    // 2nd stage: Update the existing chart with new data without resetting zoom/pan state
+    // 2nd stage: Update data without resetting pan/zoom
     const refs = chartRefs.current;
 
     if (candles && candles.length > 0) {
@@ -165,7 +167,6 @@ export default function ChartWrapper({
         close: c.close,
       }));
       const uniqueCandles = Array.from(new Map(mappedCandles.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
-      
       refs.candleSeries.setData(uniqueCandles);
     }
 
@@ -210,7 +211,7 @@ export default function ChartWrapper({
     }
   }, [candles, indicators, rsiPane, height, visibleNames]); 
 
-  // 3rd stage: Cleanup chart instances when component unmounts
+  // 3rd stage: Cleanup
   useEffect(() => {
     return () => {
       if (chartRefs.current) {
@@ -221,7 +222,7 @@ export default function ChartWrapper({
     };
   }, []);
 
-  // 4th stage: Handle window resize to adjust chart width dynamically
+  // 4th stage: ResizeObserver
   useEffect(() => {
     const updateDimensions = () => {
       if (chartRefs.current) {
@@ -240,55 +241,59 @@ export default function ChartWrapper({
 
   return (
     <div className="w-full space-y-2 overflow-hidden">
-      {indicators && indicators.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/60">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {indicators.map((ind) => {
-              const isVisible = !!visibleNames[ind.name];
-              return (
-                <button
-                  key={ind.name}
-                  type="button"
-                  onClick={() => toggleSingleIndicator(ind.name)}
-                  title={isVisible ? 'Grafikte Gizle' : 'Grafikte Göster'}
-                  className={`flex items-center space-x-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition-all cursor-pointer select-none ${
-                    isVisible
-                      ? 'bg-[#161b26] border-slate-700 text-slate-100 shadow-sm'
-                      : 'bg-[#0b0e14]/40 border-slate-800/60 text-slate-500 opacity-60 hover:opacity-90'
-                  }`}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full shrink-0 transition-transform"
-                    style={{
-                      backgroundColor: isVisible ? ind.color : '#475569',
-                      transform: isVisible ? 'scale(1)' : 'scale(0.8)',
-                    }}
-                  />
-                  <span className={isVisible ? '' : 'line-through'}>{ind.name}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <button
-            type="button"
-            onClick={handleToggleAll}
-            className="flex items-center space-x-1.5 rounded-md border border-slate-700/80 bg-[#161b26] hover:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition-colors cursor-pointer shrink-0"
-          >
-            {activeCount > 0 ? (
-              <>
-                <EyeOff className="h-3.5 w-3.5 text-slate-400" />
-                <span>Çizgileri Gizle ({activeCount}/{indicators.length})</span>
-              </>
-            ) : (
-              <>
-                <Eye className="h-3.5 w-3.5 text-blue-400" />
-                <span>Tümünü Göster</span>
-              </>
-            )}
-          </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/60">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {indicators.map((ind) => {
+            const isVisible = !!visibleNames[ind.name];
+            return (
+              <button
+                key={ind.name}
+                type="button"
+                onClick={() => toggleSingleIndicator(ind.name)}
+                title={isVisible ? 'Grafikte Gizle' : 'Grafikte Göster'}
+                className={`flex items-center space-x-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition-all cursor-pointer select-none ${
+                  isVisible
+                    ? 'bg-[#161b26] border-slate-700 text-slate-100 shadow-sm'
+                    : 'bg-[#0b0e14]/40 border-slate-800/60 text-slate-500 opacity-60 hover:opacity-90'
+                }`}
+              >
+                <span
+                  className="h-2 w-2 rounded-full shrink-0 transition-transform"
+                  style={{
+                    backgroundColor: isVisible ? ind.color : '#475569',
+                    transform: isVisible ? 'scale(1)' : 'scale(0.8)',
+                  }}
+                />
+                <span className={isVisible ? '' : 'line-through'}>{ind.name}</span>
+              </button>
+            );
+          })}
         </div>
-      )}
+
+        <div className="flex items-center space-x-2 shrink-0">
+          {headerAction}
+
+          {indicators && indicators.length > 0 && (
+            <button
+              type="button"
+              onClick={handleToggleAll}
+              className="flex items-center space-x-1.5 rounded-md border border-slate-700/80 bg-[#161b26] hover:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition-colors cursor-pointer shrink-0"
+            >
+              {activeCount > 0 ? (
+                <>
+                  <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                  <span>Çizgileri Gizle ({activeCount}/{indicators.length})</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                  <span>Tümünü Göster</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
 
       <div className="relative w-full">
         <div ref={mainChartContainerRef} className="w-full" />

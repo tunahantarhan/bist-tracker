@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import StockSearch from '@/components/ui/StockSearch';
+import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
 import {
   API_URL,
   fetchMarketData,
@@ -17,7 +18,7 @@ import {
 } from '@/services/api';
 import {
   User, TrendingUp, TrendingDown, RefreshCw, CheckCircle2, XCircle,
-  Activity, Trash2, LogOut, ShieldCheck, Filter, Calendar, Clock,
+  Trash2, LogOut, ShieldCheck, Filter, Calendar, Clock,
   SlidersHorizontal, Flame, Trophy, Gem, X, ChevronDown, ChevronUp,
   Search, Plus, ExternalLink, Sparkles, SquareText
 } from 'lucide-react';
@@ -60,15 +61,10 @@ const getDefaultChartConfig = (tf?: string) => {
   return DEFAULT_CONFIG_BY_TIMEFRAME[tf?.toLowerCase() || '4h'] || { interval: '4h', period: '6mo' };
 };
 
-// Helper functions to format timeframe codes into Turkish UI representations
 const formatTfLabel = (tf?: string) => {
   if (!tf) return '4S';
   const map: Record<string, string> = {
-    '5m': '5Dk',
-    '15m': '15Dk',
-    '1h': '1S',
-    '4h': '4S',
-    '1d': '1G',
+    '5m': '5Dk', '15m': '15Dk', '1h': '1S', '4h': '4S', '1d': '1G',
   };
   return map[tf.toLowerCase()] || tf.toUpperCase();
 };
@@ -76,11 +72,8 @@ const formatTfLabel = (tf?: string) => {
 const formatTfLongLabel = (tf?: string) => {
   if (!tf) return '4 Saatlik (4S)';
   const map: Record<string, string> = {
-    '5m': '5 Dakikalık (5Dk)',
-    '15m': '15 Dakikalık (15Dk)',
-    '1h': '1 Saatlik (1S)',
-    '4h': '4 Saatlik (4S)',
-    '1d': 'Günlük (1G)',
+    '5m': '5 Dakikalık (5Dk)', '15m': '15 Dakikalık (15Dk)',
+    '1h': '1 Saatlik (1S)', '4h': '4 Saatlik (4S)', '1d': 'Günlük (1G)',
   };
   return map[tf.toLowerCase()] || tf.toUpperCase();
 };
@@ -88,11 +81,7 @@ const formatTfLongLabel = (tf?: string) => {
 const formatTfFullText = (tf?: string) => {
   if (!tf) return '4 Saat';
   const map: Record<string, string> = {
-    '5m': '5 Dakika',
-    '15m': '15 Dakika',
-    '1h': '1 Saat',
-    '4h': '4 Saat',
-    '1d': '1 Gün',
+    '5m': '5 Dakika', '15m': '15 Dakika', '1h': '1 Saat', '4h': '4 Saat', '1d': '1 Gün',
   };
   return map[tf.toLowerCase()] || tf;
 };
@@ -155,10 +144,7 @@ export default function DashboardPage() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const selectedSymbolRef = useRef<string | null>(null);
 
-  // Dedicated DOM reference to scroll directly to the chart container
   const chartSectionRef = useRef<HTMLDivElement>(null);
-
-  // In-memory client-side cache for charts & market data (symbol + interval + period -> payload)
   const chartCacheRef = useRef<Record<string, { candles: any[]; indicators?: any[]; rsi_pane?: any; marketData?: MarketData }>>({});
 
   useEffect(() => {
@@ -170,15 +156,12 @@ export default function DashboardPage() {
   const [isWatchlistOpen, setIsWatchlistOpen] = useState<boolean>(true);
   const [isFunnelOpen, setIsFunnelOpen] = useState<boolean>(true);
 
-  // State and reference for the custom non-shifting profile dropdown menu
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState<boolean>(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
-  // Expandable states for Top 10 lists
   const [isTopScoredExpanded, setIsTopScoredExpanded] = useState<boolean>(false);
   const [isTopPricedExpanded, setIsTopPricedExpanded] = useState<boolean>(false);
   
-  // State and reference for the RSI Filter explanation card
   const [isRsiInfoOpen, setIsRsiInfoOpen] = useState<boolean>(false);
   const rsiInfoRef = useRef<HTMLDivElement>(null);
   const rsiButtonRef = useRef<HTMLButtonElement>(null);
@@ -186,17 +169,12 @@ export default function DashboardPage() {
   const [isRuleDrawerOpen, setIsRuleDrawerOpen] = useState<boolean>(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
 
-  // Dynamic timeframe state for active primary filter (updated from API)
   const [primaryFilterTf, setPrimaryFilterTf] = useState<string>('4h');
-
-  // Initial chart configuration (dynamically synced with primary filter on initialization)
   const [chartConfig, setChartConfig] = useState<{ interval: string; period: string }>({
     interval: '4h', period: '6mo',
   });
 
   const [marketData, setMarketData] = useState<MarketData | null>(null);
-  
-  // Independent chart data state to avoid resetting zoom level during background refreshes
   const [chartData, setChartData] = useState<{
     candles: any[];
     indicators?: any[];
@@ -210,7 +188,6 @@ export default function DashboardPage() {
   
   const [liveTickerData, setLiveTickerData] = useState<TickerItem[]>([]);
 
-  // Dedicated references to prevent false flash animations on symbol/timeframe switch
   const lastRenderedScoreRef = useRef<{ symbol: string; score: number } | null>(null);
   const [scoreFlash, setScoreFlash] = useState<'up' | 'down' | null>(null);
 
@@ -228,9 +205,7 @@ export default function DashboardPage() {
     if (isProfileMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isProfileMenuOpen]);
 
   useEffect(() => {
@@ -248,12 +223,9 @@ export default function DashboardPage() {
     if (isRsiInfoOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isRsiInfoOpen]);
 
-  // Select stock and smoothly scroll to chart section across both desktop and mobile
   const handleSelectStockWithScroll = (symbol: string) => {
     setPriceFlash(null);
     setScoreFlash(null);
@@ -263,14 +235,12 @@ export default function DashboardPage() {
     }
   };
 
-  // Dedicated handler for RSI list: automatically switches chart to primary rule timeframe
   const handleSelectRsiStockWithScroll = (symbol: string) => {
     const targetConfig = getDefaultChartConfig(primaryFilterTf);
     setChartConfig(targetConfig);
     handleSelectStockWithScroll(symbol);
   };
 
-  // Synchronizes active primary filter timeframe directly from backend rules and updates default chart config
   const refreshPrimaryFilterTimeframe = useCallback(async (syncChartConfig = false) => {
     try {
       const token = localStorage.getItem('access_token');
@@ -289,11 +259,10 @@ export default function DashboardPage() {
         }
       }
     } catch {
-      // Silent error fallback
+      // Fallback
     }
   }, []);
 
-  // Refreshes left menu RSI and ranking overview without modifying the selected stock
   const refreshOverview = useCallback(async () => {
     try {
       const ov = await fetchMarketOverview();
@@ -313,12 +282,10 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Fetches market data for the target stock with instant client cache fallback
   const loadMarket = useCallback(async (symbol: string, interval: string, period: string, isBackground = false, signal?: AbortSignal) => {
     const cacheKey = `${symbol}_${interval}_${period}`;
     const cachedData = chartCacheRef.current[cacheKey];
 
-    // 1. If cached data exists and it's not a background refresh, render immediately (0ms)
     if (cachedData && !isBackground) {
       setChartData({
         candles: cachedData.candles,
@@ -351,10 +318,8 @@ export default function DashboardPage() {
         marketData: data,
       };
 
-      // 2. Save fresh data to client cache
       chartCacheRef.current[cacheKey] = newChartPayload;
 
-      // 3. Update chart state if it was a user click or if cache was empty
       if (!isBackground || !cachedData) {
         setChartData({
           candles: data.candles,
@@ -373,9 +338,7 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Initial dashboard setup (runs only on initial page load - leaving initial stock selection empty)
   const initializeDashboard = useCallback(async () => {
-    // 1. Fetch Watchlist independently (renders in ~10ms without selecting)
     fetchWatchlist()
       .then((data) => {
         const symbols = data.map((item: any) => item.symbol);
@@ -383,16 +346,13 @@ export default function DashboardPage() {
       })
       .catch((err) => console.warn('Watchlist init warning:', err));
 
-    // 2. Fetch Ticker immediately on initial load (0s delay)
     fetch(`${API_URL}/market/ticker`, { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setLiveTickerData(data))
       .catch((err) => console.warn('Ticker init warning:', err));
 
-    // 3. Fetch primary rule configuration and sync initial chart timeframe & period
     await refreshPrimaryFilterTimeframe(true);
 
-    // 4. Fetch Overview (RSI and Top Scored lists without auto selecting first stock)
     try {
       const ov = await fetchMarketOverview();
       setOverview(ov);
@@ -413,7 +373,6 @@ export default function DashboardPage() {
     }
   }, [refreshPrimaryFilterTimeframe]);
 
-  // Real-time synchronization with admin panel rules via BroadcastChannel
   useEffect(() => {
     try {
       const bc = new BroadcastChannel('bist_tracker_sync');
@@ -434,7 +393,6 @@ export default function DashboardPage() {
     }
   }, [refreshOverview, refreshPrimaryFilterTimeframe]);
 
-  // Initial authentication verification and dashboard boot
   useEffect(() => {
     const token = localStorage.getItem('access_token');
     if (!token) {
@@ -446,13 +404,11 @@ export default function DashboardPage() {
     initializeDashboard();
   }, [router, initializeDashboard]);
 
-  // Delay chart resize calculation on layout toggle
   useEffect(() => {
     const timer = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 60);
     return () => clearTimeout(timer);
   }, [isWatchlistOpen, isFunnelOpen]);
 
-  // Delayed BIST clock calculation and market hours freeze
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
@@ -490,7 +446,6 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Triggered when stock or interval period is changed by user
   useEffect(() => {
     if (!selectedSymbol || !isAuthenticated) return;
     const controller = new AbortController();
@@ -498,7 +453,6 @@ export default function DashboardPage() {
     return () => controller.abort();
   }, [selectedSymbol, chartConfig, isAuthenticated, loadMarket]);
 
-  // Unified Heartbeat: Consolidates all background requests into a single synchronized 15s cycle
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -557,12 +511,10 @@ export default function DashboardPage() {
     });
   };
 
-  // Safe score evaluation: strictly ensure marketData belongs to selectedSymbol
   const currentScore = (marketData && marketData.symbol === selectedSymbol && marketData.score !== undefined)
     ? marketData.score
     : (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
 
-  // Score flash animation: only triggers when live score updates for the exact SAME active stock
   useEffect(() => {
     if (!selectedSymbol) {
       setScoreFlash(null);
@@ -584,7 +536,6 @@ export default function DashboardPage() {
     }
   }, [selectedSymbol, currentScore]);
 
-  // Price flash animation: only triggers when live price updates for the exact SAME active stock
   useEffect(() => {
     if (!marketData || marketData.symbol !== selectedSymbol || marketData.current_price === undefined) {
       setPriceFlash(null);
@@ -619,12 +570,12 @@ export default function DashboardPage() {
     .sort((a, b) => b.current_price - a.current_price)
     .slice(0, 10);
 
-  // Active primary filter timeframe strictly determined for badge and dynamic cards
   const activePrimaryFilterTf = (marketData as any)?.primary_filter_timeframe || primaryFilterTf || '4h';
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0e14] text-slate-200 overflow-x-hidden">
-      <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#0b0e14]/95 backdrop-blur-md px-4 sm:px-6 min-h-[68px] flex items-center">
+    <div className="min-h-screen flex flex-col bg-[#0b0e14] text-slate-200 overflow-x-clip">
+      {/* Top Navbar with True Sticky & Backdrop-Blur */}
+      <header className="sticky top-0 z-50 border-b border-slate-800/80 bg-[#0b0e14]/80 backdrop-blur-md px-4 sm:px-6 min-h-[68px] flex items-center transition-all">
         {isMobileSearchOpen ? (
           <div className="flex items-center w-full gap-3 animate-in fade-in duration-200">
              <div className="flex-1 w-full">
@@ -875,7 +826,6 @@ export default function DashboardPage() {
                     </button>
                   </div>
 
-                  {/* Dynamic RSI explanation drawer based on active filter timeframe */}
                   <div 
                     ref={rsiInfoRef}
                     onClick={(e) => e.stopPropagation()}
@@ -951,7 +901,13 @@ export default function DashboardPage() {
                               <Plus className="h-4 w-4 sm:h-5 sm:w-5" />
                             )}
                           </button>
+
+                          {/* Rule Alert Dropdown on Chart Header */}
+                          <div className="mt-1">
+                            <StockAlertDropdown symbol={selectedSymbol} />
+                          </div>
                         </div>
+
                         <div className="flex flex-wrap items-center gap-2">
                            <span className="text-[10px] font-mono uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2 py-1 rounded">
                             {chartConfig.interval} / {chartConfig.period}
@@ -960,7 +916,6 @@ export default function DashboardPage() {
                              {dynamicNames[selectedSymbol!] || selectedSymbol}
                            </span>
 
-                           {/* Dynamic primary filter badge indicating timeframe */}
                            {marketData && marketData.symbol === selectedSymbol && marketData.has_primary_filter && (
                              <span className={`px-2 py-1 rounded border text-[10px] font-mono font-semibold flex items-center space-x-1.5 ${
                                marketData.primary_filter_passed 
@@ -1186,6 +1141,7 @@ export default function DashboardPage() {
         </div>
       </main>
 
+      {/* Rules Breakdown Drawer */}
       {isRuleDrawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="fixed inset-0" onClick={() => setIsRuleDrawerOpen(false)} />
