@@ -49,10 +49,11 @@ def _get_symbol_lock(symbol: str) -> asyncio.Lock:
 class YFinanceProvider(BaseDataProvider):
 
     def _format_symbol(self, symbol: str) -> str:
-        symbol = symbol.upper()
-        if not symbol.endswith(".IS"):
-            return f"{symbol}.IS"
-        return symbol
+        symbol = symbol.upper().strip()
+        # System doesn't append .IS if it's already an index, currency pair (=X) or commodity/future (=F)
+        if any(symbol.endswith(suffix) for suffix in [".IS", "=X", "=F"]) or symbol.startswith("^"):
+            return symbol
+        return f"{symbol}.IS"
 
     def _slice_by_period(self, df: pd.DataFrame, period: str) -> pd.DataFrame:
         if df.empty or period not in PERIOD_TO_DAYS:

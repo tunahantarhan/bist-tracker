@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import StockTicker from '@/components/ui/StockTicker';
+import MacroKpiGrid from '@/components/ui/MacroKpiGrid';
 
 interface TickerItem {
   symbol: string;
@@ -1075,6 +1076,8 @@ export default function DashboardPage() {
               )}
             </div>
 
+            <MacroKpiGrid/>
+
             {/* Top 10 Ranked Lists */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
               
@@ -1201,6 +1204,25 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
+
+      {/* Legal Notice Footer */}
+      <footer className="mt-12 border-t border-slate-800/60 bg-[#080a0f] px-6 py-6 text-center select-none">
+        <div className="max-w-5xl mx-auto flex flex-col items-center space-y-2">
+          <div className="flex items-center space-x-2 text-slate-400 text-xs font-semibold">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+            <span>Yasal Uyarı & Bilgilendirme</span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            Burada yer alan yatırım bilgi, yorum ve tavsiyeleri yatırım danışmanlığı kapsamında değildir. 
+            Platformumuzda sunulan tüm veriler, göstergeler ve algoritmik skorlar kullanıcı tarafından belirlenen 
+            veya sisteme tanımlanmış matematiksel teknik analiz koşullarının izlenmesi amacıyla üretilmekte olup 
+            hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır.
+          </p>
+          <p className="text-[10px] text-slate-400 font-mono">
+            © {new Date().getFullYear()} BIST Tracker. Tüm hakları saklıdır.
+          </p>
+        </div>
+      </footer>
 
       {/* Rules Breakdown Drawer with Clarified Condition Text */}
       {isRuleDrawerOpen && (

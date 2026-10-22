@@ -175,6 +175,15 @@ export interface MarketData {
   rsi_pane?: RsiPaneData;
 }
 
+export interface MacroItem {
+  symbol: string;
+  label: string;
+  current_price: number;
+  change_pct: number;
+  prefix: string;
+  suffix: string;
+}
+
 export async function fetchRules(): Promise<Rule[]> {
   const res = await fetchWithAuth(`${API_BASE_URL}/rules`, { cache: 'no-store' });
   if (!res.ok) throw new Error('API yanıt vermedi');
@@ -339,4 +348,15 @@ export async function clearAllNotifications(): Promise<void> {
   await fetchWithAuth(`${API_BASE_URL}/notifications/clear-all`, {
     method: 'DELETE',
   });
+}
+
+export async function fetchMacroData(): Promise<MacroItem[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/market/macro`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (err) {
+    console.warn('Macro market data fetch warning:', err);
+    return [];
+  }
 }

@@ -113,6 +113,7 @@ TICKER_INFO = {
 }
 
 CACHE_KEY_TICKER = "bist_ticker_data_v1"
+CACHE_KEY_MACRO = "macro_market_data_v2"
 CACHE_TTL_SECONDS = 60
 
 @router.get("/ticker")
@@ -160,6 +161,95 @@ async def get_ticker_data():
         return valid_results
     
     return []
+
+
+@router.get("/macro")
+async def get_macro_market_data():
+    """
+    Returns BIST 100, Gram Gold, USD/TRY, and EUR/TRY with Redis caching.
+    """
+    cached = await CacheService.get_json(CACHE_KEY_MACRO)
+    if cached:
+        return cached
+
+    def _fetch_macro():
+        macro_tickers = ["XU100.IS", "USDTRY=X", "EURTRY=X", "GC=F"]
+        df = yf.download(" ".join(macro_tickers), period="5d", interval="1d", progress=False)
+        
+        if df.empty:
+            return []
+
+        close_df = df['Close'] if isinstance(df.columns, pd.MultiIndex) else df
+
+        def _get_last_and_prev(col_name: str):
+            if col_name in close_df:
+                series = close_df[col_name].dropna().tolist()
+                if len(series) >= 2:
+                    return float(series[-1]), float(series[-2])
+                elif len(series) == 1:
+                    return float(series[-1]), float(series[-1])
+            return 0.0, 0.0
+
+        xu100_curr, xu100_prev = _get_last_and_prev("XU100.IS")
+        usd_curr, usd_prev = _get_last_and_prev("USDTRY=X")
+        eur_curr, eur_prev = _get_last_and_prev("EURTRY=X")
+        ons_curr, ons_prev = _get_last_and_prev("GC=F")
+
+        # Gram Gold (TRY) calculation: (Ons Gold / 31.1034768) * USDTRY
+        TROY_OUNCE_GRAM = 31.1034768
+        gram_curr = (ons_curr / TROY_OUNCE_GRAM) * usd_curr if ons_curr > 0 and usd_curr > 0 else 0.0
+        gram_prev = (ons_prev / TROY_OUNCE_GRAM) * usd_prev if ons_prev > 0 and usd_prev > 0 else 0.0
+
+        def _calc_pct(curr, prev):
+            if prev > 0:
+                return round(((curr - prev) / prev) * 100, 2)
+            return 0.0
+
+        # Order: BIST 100 -> Gram Altın -> Dolar -> Euro
+        results = [
+            {
+                "symbol": "BIST 100",
+                "label": "BIST 100",
+                "current_price": round(xu100_curr, 2),
+                "change_pct": _calc_pct(xu100_curr, xu100_prev),
+                "prefix": "",
+                "suffix": ""
+            },
+            {
+                "symbol": "GRAM_ALTIN",
+                "label": "Gram Altın",
+                "current_price": round(gram_curr, 2),
+                "change_pct": _calc_pct(gram_curr, gram_prev),
+                "prefix": "₺",
+                "suffix": ""
+            },
+            {
+                "symbol": "USD/TRY",
+                "label": "Dolar",
+                "current_price": round(usd_curr, 2),
+                "change_pct": _calc_pct(usd_curr, usd_prev),
+                "prefix": "₺",
+                "suffix": ""
+            },
+            {
+                "symbol": "EUR/TRY",
+                "label": "Euro",
+                "current_price": round(eur_curr, 2),
+                "change_pct": _calc_pct(eur_curr, eur_prev),
+                "prefix": "₺",
+                "suffix": ""
+            }
+        ]
+        return results
+
+    macro_data = await asyncio.to_thread(_fetch_macro)
+
+    if macro_data:
+        await CacheService.set_json(CACHE_KEY_MACRO, macro_data, expiration=CACHE_TTL_SECONDS)
+        return macro_data
+
+    return []
+
 
 @router.get("/universe")
 async def get_universe():
