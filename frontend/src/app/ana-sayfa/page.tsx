@@ -5,6 +5,7 @@ import ChartWrapper from '@/components/charts/ChartWrapper';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import StockSearch from '@/components/ui/StockSearch';
 import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
+import ScoreGauge from '@/components/ui/ScoreGauge';
 import {
   API_URL,
   fetchMarketData,
@@ -749,7 +750,7 @@ export default function DashboardPage() {
           
           <aside className="w-full lg:w-72 shrink-0 space-y-4">
             
-            {/* Watchlist Card with Smooth Collapsible Accordion */}
+            {/* Watchlist Card with Smooth Collapsible Accordion & Circular Score Gauges */}
             <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
               <div 
                 onClick={() => setIsWatchlistOpen(!isWatchlistOpen)}
@@ -796,10 +797,11 @@ export default function DashboardPage() {
                                 <span className="text-[10px] text-slate-500 truncate max-w-[110px]">{dynamicNames[symbol] || symbol}</span>
                               </div>
                             </div>
+
+                            {/* Open-bottom Speedometer Score Gauge for Watchlist Item */}
                             <div className="flex items-center space-x-2 shrink-0">
-                              <span className="text-xs font-bold font-mono text-emerald-400">
-                                {symScore !== undefined ? symScore.toFixed(2) : '--'}
-                              </span>
+                              <ScoreGauge score={symScore} size="sm" />
+
                               <button 
                                 disabled={isMutating}
                                 onClick={(e) => { 
@@ -1012,6 +1014,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
+                    {/* Chart Header Metrics Container */}
                     <div className="flex flex-col justify-center bg-[#161b26]/50 border border-slate-800/80 rounded-2xl p-4 sm:p-5 w-full md:w-auto xl:min-w-[340px] md:self-start">
                       {marketData && marketData.symbol === selectedSymbol && !loadingMarket ? (
                         <div className="flex flex-col space-y-4">
@@ -1033,17 +1036,24 @@ export default function DashboardPage() {
                           
                           <div className="border-t border-slate-800/80 w-full"></div>
 
+                          {/* Gauge and Drawer Button Row */}
                           <div className="flex items-center justify-between">
-                            <div className={`flex flex-col p-2 -mx-2 rounded-lg transition-colors duration-500 ${scoreFlash === 'up' ? 'bg-emerald-500/20' : scoreFlash === 'down' ? 'bg-rose-500/20' : 'bg-transparent'}`}>
-                              <span className={`text-2xl sm:text-3xl font-mono font-bold leading-none transition-colors duration-300 ${scoreFlash === 'up' ? 'text-emerald-400' : scoreFlash === 'down' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                {currentScore.toFixed(2)}
-                              </span>
-                              <span className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">SKOR</span>
+                            <div className={`flex items-center space-x-3 p-1.5 -mx-1.5 rounded-lg transition-colors duration-500 ${scoreFlash === 'up' ? 'bg-emerald-500/20' : scoreFlash === 'down' ? 'bg-rose-500/20' : 'bg-transparent'}`}>
+                              <ScoreGauge score={currentScore} size="md" />
+                              <div className="flex flex-col">
+                                <span className="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wider">
+                                  Kural Skoru
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  / 100 Puan
+                                </span>
+                              </div>
                             </div>
+
                             <button 
                               onClick={() => setIsRuleDrawerOpen(true)} 
                               title="Kural Karnesini Aç"
-                              className="p-3 rounded-xl bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 transition-all cursor-pointer flex items-center justify-center"
+                              className="p-3 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/80 text-slate-300 hover:text-white transition-all cursor-pointer flex items-center justify-center shadow-md"
                             >
                               <SlidersHorizontal className="h-5 w-5 sm:h-6 sm:w-6" />
                             </button>

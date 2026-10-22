@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
+import ScoreGauge from '@/components/ui/ScoreGauge';
 import { API_URL } from '@/services/api';
 
 interface RuleBreakdownItem {
@@ -240,10 +241,16 @@ export default function StockDetailPage() {
 
             <div className="h-10 w-px bg-slate-800 hidden sm:block" />
 
-            <div className="text-center sm:text-right">
-              <div className="text-xs text-slate-500 font-mono">Toplam Skor</div>
-              <div className="text-2xl font-black font-mono text-emerald-400">
-                {data?.score?.toFixed(1) ?? '0.0'}
+            {/* Circular Speedometer Gauge for Stock Detail Header */}
+            <div className="flex items-center space-x-3">
+              <ScoreGauge score={data?.score} size="md" showDecimals={true} />
+              <div className="hidden sm:flex flex-col text-left">
+                <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                  Kural Skoru
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  / 100 Puan
+                </span>
               </div>
             </div>
           </div>
