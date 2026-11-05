@@ -52,6 +52,12 @@ OVERLAY_INDICATORS = {
     "BOLLINGER_UPPER", "BOLLINGER_MIDDLE", "BOLLINGER_LOWER",
     "BB_UPPER", "BB_MIDDLE", "BB_LOWER",
 }
+OVERLAY_LABELS = {
+    "SMA": "MA", "MA": "MA", "EMA": "EMA",
+    "BOLLINGER_UPPER": "BB Üst", "BB_UPPER": "BB Üst",
+    "BOLLINGER_MIDDLE": "BB Orta", "BB_MIDDLE": "BB Orta",
+    "BOLLINGER_LOWER": "BB Alt", "BB_LOWER": "BB Alt",
+}
 LINE_COLORS = ["#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f43f5e"]
 
 _overview_lock = asyncio.Lock()
@@ -343,7 +349,7 @@ def _build_overlays(chart_df: pd.DataFrame, times: list[str], rules: Sequence[Ru
                 logger.debug("Overlay %s skipped: %s", key, e)
                 continue
             overlays.append({
-                "name": f"{name.upper()} ({length})" if length else name.upper(),
+                "name": f"{OVERLAY_LABELS.get(name.upper(), name.upper())} ({length})" if length else name.upper(),
                 "color": LINE_COLORS[len(overlays) % len(LINE_COLORS)],
                 "data": _series_points(times, series),
             })

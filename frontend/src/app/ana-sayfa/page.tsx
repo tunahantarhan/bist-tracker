@@ -30,6 +30,7 @@ import MacroKpiGrid from '@/components/ui/MacroKpiGrid';
 import RuleConditionText from '@/components/rules/RuleConditionText';
 import { clearSession, getAccessToken, getUserSlug, isAdminSession } from '@/lib/auth';
 import { useValueFlash } from '@/hooks/useValueFlash';
+import { tfLabel } from '@/lib/timeframes';
 
 const CHART_INTERVALS = [
   { value: '5m', label: '5Dk' }, { value: '15m', label: '15Dk' },
@@ -55,17 +56,6 @@ const DEFAULT_CONFIG_BY_TIMEFRAME: Record<string, ChartConfig> = {
 
 const getDefaultChartConfig = (tf?: string): ChartConfig =>
   DEFAULT_CONFIG_BY_TIMEFRAME[tf?.toLowerCase() || '4h'] || DEFAULT_CONFIG_BY_TIMEFRAME['4h'];
-
-const TIMEFRAME_LABELS: Record<string, { short: string; long: string; full: string }> = {
-  '5m': { short: '5Dk', long: '5 Dakikalık (5Dk)', full: '5 Dakika' },
-  '15m': { short: '15Dk', long: '15 Dakikalık (15Dk)', full: '15 Dakika' },
-  '1h': { short: '1S', long: '1 Saatlik (1S)', full: '1 Saat' },
-  '4h': { short: '4S', long: '4 Saatlik (4S)', full: '4 Saat' },
-  '1d': { short: '1G', long: 'Günlük (1G)', full: '1 Gün' },
-};
-
-const tfLabel = (tf: string, kind: 'short' | 'long' | 'full') =>
-  TIMEFRAME_LABELS[tf.toLowerCase()]?.[kind] ?? tf.toUpperCase();
 
 // Session flags live in localStorage; reading them through useSyncExternalStore keeps SSR and hydration consistent
 const noopSubscribe = () => () => {};
@@ -988,7 +978,7 @@ export default function DashboardPage() {
                       <div className="text-xs text-slate-200 flex flex-col space-y-1.5 min-w-0">
                         <span className="font-semibold truncate">{rule.name}</span>
                         <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
-                          <span className="bg-slate-800/80 px-1.5 py-0.5 rounded">{rule.timeframe?.toUpperCase()}</span>
+                          <span className="bg-slate-800/80 px-1.5 py-0.5 rounded">{tfLabel(rule.timeframe)}</span>
                           <RuleConditionText rule={rule} />
                         </div>
                       </div>

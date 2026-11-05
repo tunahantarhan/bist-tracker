@@ -13,6 +13,7 @@ import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
 import ScoreGauge from '@/components/ui/ScoreGauge';
 import { fetchMarketData, MarketData, PeriodicReturnItem } from '@/services/api';
 import RuleConditionText from '@/components/rules/RuleConditionText';
+import { tfLabel } from '@/lib/timeframes';
 
 type StockDetailData = MarketData;
 
@@ -371,7 +372,7 @@ export default function StockDetailPage() {
                         <div className="flex items-center space-x-2">
                           <span className="text-xs font-semibold text-slate-200 truncate">{rule.name}</span>
                           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
-                            {rule.timeframe?.toUpperCase()}
+                            {tfLabel(rule.timeframe)}
                           </span>
                         </div>
                         <div className="text-[11px] font-mono text-slate-400">
@@ -409,7 +410,7 @@ export default function StockDetailPage() {
             Burada yer alan yatırım bilgi, yorum ve tavsiyeleri yatırım danışmanlığı kapsamında değildir. 
             Platformumuzda sunulan tüm veriler, göstergeler ve algoritmik skorlar kullanıcı tarafından belirlenen 
             veya sisteme tanımlanmış matematiksel teknik analiz koşullarının izlenmesi amacıyla üretilmekte olup 
-            hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır[cite: 3].
+            hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır.
           </p>
           <p className="text-[10px] text-slate-400 font-mono">
             © {new Date().getFullYear()} BIST Tracker. Tüm hakları saklıdır.
