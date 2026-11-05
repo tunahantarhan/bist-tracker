@@ -1,35 +1,13 @@
-import os
-import smtplib
 import asyncio
-from email.mime.text import MIMEText
+import logging
+import smtplib
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Optional
-from pathlib import Path
 
+from app.core.config import settings
 
-def _load_env_fallback():
-    """Reads .env automatically without requiring external third-party packages."""
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except ImportError:
-        current_dir = Path(__file__).resolve().parent
-        for candidate in [current_dir, current_dir.parent, current_dir.parent.parent]:
-            env_file = candidate / ".env"
-            if env_file.exists():
-                with open(env_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            k, v = line.split("=", 1)
-                            k = k.strip()
-                            v = v.strip().strip("'").strip('"')
-                            if k not in os.environ:
-                                os.environ[k] = v
-                break
-
-
-_load_env_fallback()
+logger = logging.getLogger(__name__)
 
 
 class EmailService:
@@ -40,15 +18,18 @@ class EmailService:
         sender_email: Optional[str] = None,
         sender_password: Optional[str] = None,
     ):
-        _load_env_fallback()
-        self.smtp_server = smtp_server or os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        self.port = int(os.getenv("SMTP_PORT") or port or 465)
-        self.sender_email = sender_email or os.getenv("SMTP_USER", "")
-        self.sender_password = sender_password or os.getenv("SMTP_PASSWORD", "")
+        self.smtp_server = smtp_server or settings.SMTP_SERVER
+        self.port = int(port or settings.SMTP_PORT)
+        self.sender_email = sender_email or settings.SMTP_USER
+        self.sender_password = sender_password or settings.SMTP_PASSWORD
 
-    def _send_sync_email(self, to_email: str, subject: str, body: str):
-        if not self.sender_email or not self.sender_password:
-            print("[MAIL WARNING] SMTP_USER veya SMTP_PASSWORD tanımlı değil. E-posta gönderimi atlandı.")
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.sender_email and self.sender_password)
+
+    def _send_sync_email(self, to_email: str, subject: str, body: str) -> None:
+        if not self.is_configured:
+            logger.info("SMTP is not configured; skipping email to %s", to_email)
             return
 
         msg = MIMEMultipart("alternative")
@@ -67,10 +48,9 @@ class EmailService:
                     server.starttls()
                     server.login(self.sender_email, self.sender_password)
                     server.send_message(msg)
-
-            print(f"[MAIL SUCCESS] Alarm e-postası başarıyla gönderildi: {to_email}")
+            logger.info("Alert email sent to %s", to_email)
         except Exception as e:
-            print(f"[MAIL ERROR] E-posta gönderim hatası ({to_email}): {e}")
+            logger.error("Email delivery failed (%s): %s", to_email, e)
 
-    async def send_alert_email(self, to_email: str, subject: str, body: str):
+    async def send_alert_email(self, to_email: str, subject: str, body: str) -> None:
         await asyncio.to_thread(self._send_sync_email, to_email, subject, body)

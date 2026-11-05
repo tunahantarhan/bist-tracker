@@ -1,6 +1,6 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
-pydantic>=2.6.0
+pydantic[email]>=2.6.0
 pydantic-settings>=2.2.0
 sqlalchemy>=2.0.28
 asyncpg>=0.29.0
@@ -8,9 +8,10 @@ alembic>=1.13.1
 psycopg2-binary>=2.9.9
 redis>=5.0.3
 pandas>=2.2.1
+numpy>=1.26
 yfinance>=0.2.37
 pandas-ta>=0.3.14b0
-apscheduler>=3.10.4
-python-dotenv>=1.0.1
-passlib[bcrypt]
-pyjwt
+apscheduler>=3.10.4,<4
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=3.2,<4.1
