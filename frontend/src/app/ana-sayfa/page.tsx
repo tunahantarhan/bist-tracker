@@ -118,6 +118,8 @@ export default function DashboardPage() {
 
   const [isWatchlistOpen, setIsWatchlistOpen] = useState<boolean>(true);
   const [isFunnelOpen, setIsFunnelOpen] = useState<boolean>(true);
+  // Below lg only one side list is shown at a time so the chart stays near the top
+  const [mobileListTab, setMobileListTab] = useState<'watchlist' | 'rsi'>('watchlist');
 
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState<boolean>(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -468,9 +470,31 @@ export default function DashboardPage() {
         <div className="flex flex-col lg:flex-row gap-6 items-start">
           
           <aside className="w-full lg:w-72 shrink-0 space-y-4">
-            
+
+            {/* Mobile list switcher */}
+            <div role="tablist" className="lg:hidden grid grid-cols-2 gap-1 rounded-xl border border-slate-800/80 bg-[#12161f]/90 p-1">
+              {([
+                { key: 'watchlist', label: 'Takip Listesi', count: watchlist.length, active: 'bg-blue-500/15 text-blue-300 border-blue-500/30' },
+                { key: 'rsi', label: 'RSI Filtresi', count: rsiPassedList.length, active: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={mobileListTab === tab.key}
+                  onClick={() => setMobileListTab(tab.key)}
+                  className={`flex items-center justify-center gap-1.5 rounded-lg border py-2 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+                    mobileListTab === tab.key ? tab.active : 'border-transparent text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className="rounded-md bg-slate-800/70 px-1.5 py-0.5 font-mono text-[10px]">{tab.count}</span>
+                </button>
+              ))}
+            </div>
+
             {/* Watchlist Card with Smooth Collapsible Accordion & Circular Score Gauges */}
-            <div className="rounded-xl border border-slate-800/80 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
+            <div className={`rounded-xl border border-slate-800/80 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex-col ${mobileListTab === 'watchlist' ? 'flex' : 'hidden lg:flex'}`}>
               <div 
                 onClick={() => setIsWatchlistOpen(!isWatchlistOpen)}
                 className="px-4 py-3.5 border-b border-slate-800/80 flex items-center justify-between cursor-pointer hover:bg-slate-800/50 transition-colors group select-none"
@@ -491,7 +515,7 @@ export default function DashboardPage() {
                 isWatchlistOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
               }`}>
                 <div className="overflow-hidden">
-                  <div className="divide-y divide-slate-800/60 max-h-[250px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
+                  <div className="divide-y divide-slate-800/60 max-h-[220px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
                     {watchlist.length === 0 ? (
                       <div className="p-6 text-center text-xs text-slate-500">Listeniz boş. Arama çubuğundan hisse ekleyin.</div>
                     ) : (
@@ -548,7 +572,7 @@ export default function DashboardPage() {
             </div>
 
             {/* RSI Filter Card with Smooth Collapsible Accordion */}
-            <div className="rounded-xl border border-amber-500/20 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex flex-col">
+            <div className={`rounded-xl border border-amber-500/20 bg-[#12161f]/90 shadow-xl backdrop-blur-md overflow-hidden flex-col ${mobileListTab === 'rsi' ? 'flex' : 'hidden lg:flex'}`}>
               <div 
                 onClick={() => setIsFunnelOpen(!isFunnelOpen)}
                 className="px-4 py-3.5 border-b border-amber-500/20 bg-amber-500/5 flex items-center justify-between cursor-pointer hover:bg-amber-500/10 transition-colors group select-none"
@@ -569,7 +593,7 @@ export default function DashboardPage() {
                 isFunnelOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
               }`}>
                 <div className="overflow-hidden">
-                  <div className="divide-y divide-slate-800/60 max-h-[250px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
+                  <div className="divide-y divide-slate-800/60 max-h-[220px] lg:max-h-[300px] overflow-y-auto scrollbar-hide">
                     {loadingOverview ? (
                       <div className="p-6 flex items-center justify-center space-x-2 text-xs text-slate-500 font-mono">
                         <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" /><span>Taranıyor...</span>
