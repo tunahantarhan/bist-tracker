@@ -1,116 +1,37 @@
-from fastapi import APIRouter
-from datetime import datetime
 import asyncio
+import re
+
 import pandas as pd
 import yfinance as yf
-from app.providers.yfinance_provider import YFinanceProvider
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_admin
+from app.core.database import get_db
+from app.core.stock_catalog import STOCK_CATALOG
+from app.models.universe import UniverseStock
 from app.services.cache_service import CacheService
+from app.services.market_service import (
+    FALLBACK_UNIVERSE,
+    get_overview,
+    get_symbol_detail,
+    invalidate_market_caches,
+)
 
 router = APIRouter(prefix="/market", tags=["Market"])
-provider = YFinanceProvider()
 
-# Hardcoded universe for the ticker
-TICKER_INFO = {
-    "AEFES": "Anadolu Efes Biracılık ve Malt",
-    "AGHOL": "AG Anadolu Grubu Holding",
-    "AKBNK": "Akbank T.A.Ş.",
-    "AKSEN": "Aksa Enerji Üretim A.Ş.",
-    "ALARK": "Alarko Holding A.Ş.",
-    "ALBRK": "Albaraka Türk Katılım Bankası",
-    "ALFAS": "Alfa Solar Enerji",
-    "ARCLK": "Arçelik A.Ş.",
-    "ARDYZ": "ARD Bilişim Teknolojileri",
-    "ASELS": "Aselsan Elektronik Sanayi",
-    "ASTOR": "Astor Enerji A.Ş.",
-    "ASUZU": "Anadolu Isuzu Otomotiv",
-    "AYDEM": "Aydem Yenilenebilir Enerji",
-    "AYGAZ": "Aygaz A.Ş.",
-    "BIMAS": "BİM Birleşik Mağazalar A.Ş.",
-    "BIZIM": "Bizim Toptan Satış Mağazaları",
-    "BRISA": "Brisa Bridgestone Sabancı",
-    "BRSAN": "Borusan Mannesmann Boru",
-    "CANTE": "Çan2 Termik A.Ş.",
-    "CCOLA": "Coca-Cola İçecek A.Ş.",
-    "CEMTS": "Çemtaş Çelik Makina Sanayi",
-    "CLEBI": "Çelebi Hava Servisi",
-    "CWENE": "CW Enerji Mühendislik",
-    "DOAS": "Doğuş Otomotiv Servis ve Ticaret",
-    "DOHOL": "Doğan Şirketler Grubu Holding",
-    "ECILC": "Eczacıbaşı İlaç",
-    "EKGYO": "Emlak Konut Gayrimenkul Yatırım Ortaklığı",
-    "ENJSA": "Enerjisa Enerji A.Ş.",
-    "ENKAI": "Enka İnşaat ve Sanayi A.Ş.",
-    "EREGL": "Ereğli Demir ve Çelik Fabrikaları",
-    "EUPWR": "Europower Enerji",
-    "EUREN": "Europen Endüstri",
-    "FROTO": "Ford Otomotiv Sanayi A.Ş.",
-    "GARAN": "Garanti BBVA",
-    "GENIL": "Gen İlaç ve Sağlık Ürünleri",
-    "GESAN": "Girişim Elektrik Sanayi",
-    "GLYHO": "Global Yatırım Holding",
-    "GOODY": "Goodyear Lastikleri T.A.Ş.",
-    "GOZDE": "Gözde Girişim Sermayesi",
-    "GUBRF": "Gübre Fabrikaları T.A.Ş.",
-    "GWIND": "Galata Wind Enerji",
-    "HALKB": "Türkiye Halk Bankası A.Ş.",
-    "HEKTS": "Hektaş Ticaret T.A.Ş.",
-    "HLGYO": "Halk Gayrimenkul Yatırım Ortaklığı",
-    "HUNER": "Hun Yenilenebilir Enerji",
-    "ISCTR": "Türkiye İş Bankası A.Ş.",
-    "ISGYO": "İş Gayrimenkul Yatırım Ortaklığı",
-    "ISMEN": "İş Yatırım Menkul Değerler",
-    "IZMDC": "İzmir Demir Çelik",
-    "JANTS": "Jantsa Jant Sanayi",
-    "KARSN": "Karsan Otomotiv",
-    "KCHOL": "Koç Holding A.Ş.",
-    "KFEIN": "Kafein Yazılım",
-    "KMPUR": "Kimteks Poliüretan Sanayi",
-    "KONTR": "Kontrolmatik Teknoloji",
-    "KORDS": "Kordsa Teknik Tekstil",
-    "KRDMD": "Kardemir Karabük Demir Çelik",
-    "LOGO": "Logo Yazılım",
-    "MGROS": "Migros Ticaret A.Ş.",
-    "MIATK": "Mia Teknoloji",
-    "NETAS": "Netaş Telekomünikasyon",
-    "ODAS": "Odaş Elektrik Üretim Sanayi",
-    "OTKAR": "Otokar Otomotiv ve Savunma",
-    "OYAKC": "Oyak Çimento Fabrikaları",
-    "OZKGY": "Özak Gayrimenkul Yatırım Ortaklığı",
-    "PAPIL": "Papilon Savunma",
-    "PATEK": "Patek Enerji",
-    "PETKM": "Petkim Petrokimya Holding A.Ş.",
-    "PGSUS": "Pegasus Hava Taşımacılığı A.Ş.",
-    "PSGYO": "Pasifik Gayrimenkul Yatırım Ortaklığı",
-    "QUAGR": "Qua Granite Hayal Yapı",
-    "RTALB": "RTA Laboratuvarları",
-    "SAHOL": "Hacı Ömer Sabancı Holding",
-    "SASA": "Sasa Polyester Sanayi A.Ş.",
-    "SISE": "Türkiye Şişe ve Cam Fabrikaları",
-    "SKBNK": "Şekerbank T.A.Ş.",
-    "SMRTG": "Smart Güneş Enerjisi",
-    "SOKM": "Şok Marketler Ticaret A.Ş.",
-    "TATGD": "Tat Gıda",
-    "TAVHL": "TAV Havalimanları Holding",
-    "TCELL": "Turkcell İletişim Hizmetleri",
-    "TKFEN": "Tekfen Holding A.Ş.",
-    "TKNSA": "Teknosa İç ve Dış Ticaret",
-    "TOASO": "Tofaş Türk Otomobil Fabrikası",
-    "TRGYO": "Torunlar Gayrimenkul Yatırım Ortaklığı",
-    "TSKB": "Türkiye Sınai Kalkınma Bankası",
-    "TTKOM": "Türk Telekomünikasyon A.Ş.",
-    "TTRAK": "Türk Traktör ve Ziraat Makineleri",
-    "TUKAS": "Tukaş Gıda Sanayi",
-    "TUPRS": "Tüpraş Türkiye Petrol Rafinerileri",
-    "ULKER": "Ülker Bisküvi Sanayi",
-    "VAKBN": "Türkiye Vakıflar Bankası T.A.O.",
-    "VBTYZ": "VBT Yazılım",
-    "VESBE": "Vestel Beyaz Eşya",
-    "VESTL": "Vestel Elektronik",
-    "VKGYO": "Vakıf Gayrimenkul Yatırım Ortaklığı",
-    "YEOTK": "Yeo Teknoloji Enerji",
-    "YKBNK": "Yapı ve Kredi Bankası A.Ş.",
-    "ZOREN": "Zorlu Enerji Elektrik Üretim"
-}
+SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{2,10}$")
+Interval = Query("4h", pattern="^(5m|15m|1h|4h|1d)$")
+Period = Query(None, pattern="^(5d|1mo|3mo|6mo|1y|2y|5y)$")
+
+
+def _clean_symbol(symbol: str) -> str:
+    sym = symbol.strip().upper()
+    if not SYMBOL_PATTERN.match(sym):
+        raise HTTPException(status_code=400, detail="Geçersiz hisse sembolü")
+    return sym
+
 
 CACHE_KEY_TICKER = "bist_ticker_data_v1"
 CACHE_KEY_MACRO = "macro_market_data_v2"
@@ -118,14 +39,13 @@ CACHE_TTL_SECONDS = 60
 
 @router.get("/ticker")
 async def get_ticker_data():
-    # 1. Redis Cache Kontrolü (< 5ms)
     cached = await CacheService.get_json(CACHE_KEY_TICKER)
     if cached:
         return cached
 
-    # 2. Cache Miss -> Toplu Yahoo Finance İndirmesi
+    # Cache miss: one bulk Yahoo Finance download for the whole catalog
     def _fetch_bulk():
-        symbols = list(TICKER_INFO.keys())
+        symbols = list(STOCK_CATALOG.keys())
         yf_syms_list = [f"{s}.IS" if not s.endswith(".IS") else s for s in symbols]
         yf_syms_str = " ".join(yf_syms_list)
         
@@ -252,5 +172,55 @@ async def get_macro_market_data():
 
 
 @router.get("/universe")
-async def get_universe():
-    return [{"symbol": k, "name": v} for k, v in TICKER_INFO.items()]
+async def get_catalog():
+    """Full stock catalog (symbol + company name) for search and admin selection."""
+    return [{"symbol": k, "name": v} for k, v in STOCK_CATALOG.items()]
+
+
+@router.get("/universe/active")
+async def get_active_universe(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(UniverseStock.symbol).where(UniverseStock.is_active.is_(True)))
+    symbols = list(result.scalars().all())
+    return symbols or FALLBACK_UNIVERSE
+
+
+@router.post("/universe/update", dependencies=[Depends(get_current_admin)])
+async def update_universe(symbols: list[str], db: AsyncSession = Depends(get_db)):
+    clean = sorted({_clean_symbol(s) for s in symbols})
+    unknown = [s for s in clean if s not in STOCK_CATALOG]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Katalogda olmayan semboller: {', '.join(unknown)}")
+
+    await db.execute(update(UniverseStock).values(is_active=False))
+    existing = set((await db.execute(select(UniverseStock.symbol))).scalars().all())
+    if clean:
+        await db.execute(
+            update(UniverseStock).where(UniverseStock.symbol.in_(clean)).values(is_active=True)
+        )
+    for sym in clean:
+        if sym not in existing:
+            db.add(UniverseStock(symbol=sym, is_active=True))
+
+    await db.commit()
+    await invalidate_market_caches()
+    return {"status": "success", "active_count": len(clean)}
+
+
+@router.get("/overview")
+async def get_market_overview(db: AsyncSession = Depends(get_db)):
+    """Scored snapshot of the active universe (cached; refreshed by the background scanner)."""
+    return await get_overview(db)
+
+
+# Must stay last: catches /market/{symbol}
+@router.get("/{symbol}")
+async def get_market_data(
+    symbol: str,
+    interval: str = Interval,
+    period: str | None = Period,
+    db: AsyncSession = Depends(get_db),
+):
+    detail = await get_symbol_detail(db, _clean_symbol(symbol), interval=interval, period=period)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Hisse verisi bulunamadı")
+    return detail

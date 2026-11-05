@@ -1,16 +1,24 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from app.services.task_runner import RuleTaskRunner
 
-scheduler = AsyncIOScheduler()
+from app.core.config import settings
+from app.services.task_runner import run_market_scan
 
-def start_scheduler():
-    # Main evaluation task that will run every 15 minutes 
+scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
+
+
+def start_scheduler() -> None:
     scheduler.add_job(
-        RuleTaskRunner.execute_rule_checks, 
-        'interval', 
-        minutes=15,
-        id="rule_evaluation_job",
-        replace_existing=True
+        run_market_scan,
+        "interval",
+        minutes=settings.SCAN_INTERVAL_MINUTES,
+        id="market_scan_job",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.start()
-    print("Arka plan zamanlayıcısı (APScheduler) başlatıldı.")
+
+
+def stop_scheduler() -> None:
+    if scheduler.running:
+        scheduler.shutdown(wait=False)

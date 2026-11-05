@@ -1,9 +1,10 @@
-import json
-import time
 import asyncio
-import yfinance as yf
+import time
+from typing import Dict, Tuple
+
 import pandas as pd
-from typing import List, Dict, Any, Tuple
+import yfinance as yf
+
 from app.providers.base import BaseDataProvider
 
 DEFAULT_PERIOD_BY_INTERVAL = {
@@ -33,7 +34,6 @@ PERIOD_TO_DAYS = {
 }
 
 _master_cache: Dict[str, Tuple[float, int, pd.DataFrame]] = {}
-_price_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _CACHE_TTL = 180.0
 
 _symbol_locks: Dict[str, asyncio.Lock] = {}
@@ -140,53 +140,3 @@ class YFinanceProvider(BaseDataProvider):
 
             _master_cache[master_key] = (time.time(), fetch_days, df.copy())
             return _prepare_response(df)
-
-    async def fetch_current_price(self, symbol: str) -> Dict[str, Any]:
-        formatted_symbol = self._format_symbol(symbol)
-        now = time.time()
-
-        if formatted_symbol in _price_cache:
-            cached_time, cached_data = _price_cache[formatted_symbol]
-            if now - cached_time < 30.0:
-                return cached_data
-
-        def _fetch_info():
-            ticker = yf.Ticker(formatted_symbol)
-            return ticker.fast_info
-
-        async with _yf_semaphore:
-            info = await asyncio.to_thread(_fetch_info)
-
-        current_price = info.get("lastPrice", 0.0)
-        previous_close = info.get("previousClose", 0.0)
-
-        change_pct = 0.0
-        if previous_close > 0:
-            change_pct = ((current_price - previous_close) / previous_close) * 100
-
-        result = {
-            "symbol": symbol.replace(".IS", ""),
-            "current_price": round(current_price, 2),
-            "change_pct": round(change_pct, 2),
-        }
-        _price_cache[formatted_symbol] = (time.time(), result)
-        return result
-
-    async def fetch_stock_data(self, symbol: str, interval: str = "15m", period: str = "1mo") -> List[Dict[str, Any]]:
-        df = await self.fetch_historical_data(symbol=symbol, period=period, interval=interval)
-        if df.empty:
-            return []
-
-        df = df.reset_index()
-        df = df.fillna(0)
-
-        if "Datetime" in df.columns:
-            df["Datetime"] = df["Datetime"].astype(str)
-            df.rename(columns={"Datetime": "Date"}, inplace=True)
-        elif "Date" in df.columns:
-            df["Date"] = df["Date"].astype(str)
-
-        return json.loads(df.to_json(orient="records"))
-
-    async def fetch_active_universe(self) -> List[str]:
-        return ["THYAO", "AKBNK", "KCHOL", "TUPRS", "GARAN"]

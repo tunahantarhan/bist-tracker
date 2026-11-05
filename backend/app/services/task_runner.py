@@ -1,47 +1,35 @@
-import asyncio
-from sqlalchemy.future import select
-from app.models.universe import UniverseStock
-from app.providers.yfinance_provider import YFinanceProvider
-from app.services.rule_engine import RuleEngine
+import logging
+
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.repositories.rule_repository import RuleRepository
+from app.core.market_hours import is_bist_open
+from app.services.alert_dispatcher import dispatch_alerts
+from app.services.market_service import get_active_rules, get_overview
 
-class RuleTaskRunner:
-    @staticmethod
-    async def execute_rule_checks() -> None:
-        async with AsyncSessionLocal() as db:
-            try:
-                rule_repo = RuleRepository(db)
-                active_rules = await rule_repo.get_active_rules()
+logger = logging.getLogger(__name__)
 
-                if not active_rules:
-                    return
 
-                universe_res = await db.execute(select(UniverseStock).where(UniverseStock.is_active == True))
-                active_symbols = [s.symbol for s in universe_res.scalars().all()]
-                
-                if not active_symbols:
-                    return
+async def run_market_scan() -> None:
+    """Scheduled job: refreshes the universe scan and dispatches alerts.
 
-                provider = YFinanceProvider()
+    The scan keeps the overview cache warm even when nobody has the dashboard open;
+    notifications are only produced while BIST is in session (configurable).
+    """
+    market_open = is_bist_open()
+    if settings.NOTIFY_ONLY_WHEN_MARKET_OPEN and not market_open:
+        logger.debug("Market closed, skipping scan")
+        return
 
-                # For each active stock, run the rules in the background (for cache warming and notifications)
-                for symbol in active_symbols:
-                    try:
-                        df = await provider.fetch_historical_data(symbol, period="6mo", interval="4h")
-                        if df.empty:
-                            continue
-                        
-                        # Just checking if it throws an error or triggers a notification, not the actual evaluation result.
-                        eval_res = RuleEngine.evaluate_symbol(df, active_rules)
-                        
-                        # Notification system will be implemented here in the future. 
-                        # For now, we just print the evaluation result.
-                        # if eval_res["has_primary_filter"] and eval_res["primary_filter_passed"]:
-                        #    print(f"[ALARM] {symbol} Ana Filtreyi Geçti!")
-
-                    except Exception as e:
-                        print(f"[{symbol}] İşleme hatası: {e}")
-
-            except Exception as e:
-                print(f"Kural işletiminde kritik hata: {e}")
+    async with AsyncSessionLocal() as db:
+        try:
+            overview = await get_overview(db, force_refresh=True)
+            rules = await get_active_rules(db)
+            sent = await dispatch_alerts(db, overview, rules)
+            logger.info(
+                "Market scan done: %d symbols, %d passed primary filter, %d notifications",
+                len(overview.get("items", [])),
+                len(overview.get("rsi_passed", [])),
+                sent,
+            )
+        except Exception:
+            logger.exception("Market scan failed")
