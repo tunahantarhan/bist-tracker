@@ -4,36 +4,17 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
-  ArrowLeft, User, Mail, Calendar, Shield, Bell, 
+  ArrowLeft, User, Mail, Calendar, Bell, 
   Trash2, ExternalLink, RefreshCw, AlertCircle, CheckCircle2 
 } from 'lucide-react';
-import { API_URL, fetchRules } from '@/services/api';
+import { CustomAlert, deleteAlert, fetchAlerts, fetchMe, fetchRules, UserProfile } from '@/services/api';
+import { getAccessToken } from '@/lib/auth';
 import { Rule } from '@/types';
-
-interface UserProfile {
-  id: number;
-  email: string;
-  first_name: string;
-  last_name: string;
-  tier: string;
-  is_active: boolean;
-  terms_accepted_at: string;
-}
-
-interface CustomAlertItem {
-  id: number;
-  symbol: string;
-  rule_id: number | null;
-  timeframe: string;
-  is_active: boolean;
-  created_at: string;
-  last_triggered_at: string | null;
-}
 
 export default function UserProfilePage() {
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [alerts, setAlerts] = useState<CustomAlertItem[]>([]);
+  const [alerts, setAlerts] = useState<CustomAlert[]>([]);
   const [rulesMap, setRulesMap] = useState<Record<number, Rule>>({});
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -44,66 +25,40 @@ export default function UserProfilePage() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const loadData = useCallback(async () => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
+  // Loads profile, alerts and rule names; state is only set after the requests resolve
+  const loadData = useCallback(() => {
+    Promise.all([
+      fetchMe().catch(() => null),
+      fetchAlerts().catch(() => [] as CustomAlert[]),
+      fetchRules().catch(() => [] as Rule[]),
+    ])
+      .then(([user, alertList, rulesData]) => {
+        if (user) setProfile(user);
+        setAlerts(alertList);
+        setRulesMap(Object.fromEntries(rulesData.map((r) => [r.id, r])));
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!getAccessToken()) {
       router.push('/giris');
       return;
     }
-
-    try {
-      setLoading(true);
-      const [userRes, alertsRes, rulesData] = await Promise.all([
-        fetch(`${API_URL}/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`${API_URL}/alerts`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetchRules().catch(() => []),
-      ]);
-
-      if (userRes.ok) {
-        const u = await userRes.json();
-        setProfile(u);
-      }
-
-      if (alertsRes.ok) {
-        const a = await alertsRes.json();
-        setAlerts(a);
-      }
-
-      const map: Record<number, Rule> = {};
-      rulesData.forEach((r) => {
-        map[r.id] = r;
-      });
-      setRulesMap(map);
-    } catch (err) {
-      console.error('Profil verileri yüklenirken hata:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [router]);
-
-  useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [router, loadData]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    loadData();
+  };
 
   const handleDeleteAlert = async (alertId: number, symbol: string) => {
-    const token = localStorage.getItem('access_token');
-    if (!token) return;
-
     setDeletingId(alertId);
     try {
-      const res = await fetch(`${API_URL}/alerts/${alertId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (res.ok) {
-        setAlerts((prev) => prev.filter((a) => a.id !== alertId));
-        showToast(`${symbol} alarmı başarıyla kaldırıldı.`);
-      }
+      await deleteAlert(alertId);
+      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
+      showToast(`${symbol} alarmı başarıyla kaldırıldı.`);
     } catch (err) {
       console.error('Alarm silme hatası:', err);
     } finally {
@@ -155,7 +110,7 @@ export default function UserProfilePage() {
 
         <button
           type="button"
-          onClick={loadData}
+          onClick={handleRefresh}
           className="p-2 rounded-lg border border-slate-700 bg-[#161b26] hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
           title="Yenile"
         >
@@ -226,7 +181,7 @@ export default function UserProfilePage() {
                 </div>
                 <h3 className="text-sm font-semibold text-slate-300">Henüz kurulu bir özel alarmınız yok.</h3>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Panelden veya hisse detay sayfalarındaki <strong className="text-amber-400">"Alarm Kur"</strong> butonuna tıklayarak istediğiniz hisseler için teknik kural alarmları oluşturabilirsiniz.
+                  Panelden veya hisse detay sayfalarındaki <strong className="text-amber-400">&quot;Alarm Kur&quot;</strong> butonuna tıklayarak istediğiniz hisseler için teknik kural alarmları oluşturabilirsiniz.
                 </p>
                 <div className="pt-2">
                   <Link

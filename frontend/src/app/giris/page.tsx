@@ -2,10 +2,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { ShieldAlert, TrendingUp, Lock, Mail, ChevronRight, User, CheckCircle2 } from 'lucide-react';
-import { API_URL } from '@/services/api';
+import { login, register } from '@/services/api';
+import { saveSession } from '@/lib/auth';
 
 export default function AuthPage() {
+  const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   
@@ -29,50 +32,29 @@ export default function AuthPage() {
       return;
     }
 
-    const endpoint = isLogin ? '/auth/login' : '/auth/register';
-    const payload = isLogin 
-      ? { email, password } 
-      : { 
-          email, 
-          password, 
-          first_name: firstName, 
-          last_name: lastName, 
-          terms_accepted: acceptedTerms 
-        };
+    if (!isLogin && password.length < 8) {
+      showToast("Şifre en az 8 karakter olmalıdır.", "error");
+      return;
+    }
 
     try {
-      const res = await fetch(`${API_URL}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        const errorMsg = Array.isArray(errorData.detail) 
-          ? errorData.detail.map((err: any) => err.msg).join(', ') 
-          : errorData.detail || 'İşlem başarısız oldu.';
-        throw new Error(errorMsg);
-      }
-
-      const data = await res.json();
-      
       if (isLogin) {
-        if (data.first_name && data.last_name) {
-          localStorage.setItem('user_slug', `${data.first_name.toLowerCase()}-${data.last_name.toLowerCase()}`);
-        }
-        localStorage.setItem('access_token', data.access_token);
-        if (data.refresh_token) {
-          localStorage.setItem('refresh_token', data.refresh_token);
-        }
-        localStorage.setItem('is_admin', data.is_admin ? 'true' : 'false');
-        window.location.href = '/ana-sayfa';
+        const data = await login(email, password);
+        saveSession(data);
+        router.push('/ana-sayfa');
       } else {
+        await register({
+          email,
+          password,
+          first_name: firstName,
+          last_name: lastName,
+          terms_accepted: acceptedTerms,
+        });
         showToast("Kayıt başarılı! Şimdi giriş yapabilirsiniz.", "success");
         setIsLogin(true);
       }
-    } catch (error: any) {
-      showToast(error.message, "error");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'İşlem başarısız oldu.', "error");
     }
   };
 
@@ -117,7 +99,7 @@ export default function AuthPage() {
               </span>
             </h1>
             <p className="text-slate-400 leading-relaxed">
-              Borsa İstanbul'daki fırsatları LLM halüsinasyonları olmadan, %100 deterministik kurallara dayalı algoritmik skorlama motoruyla yakalayın.
+              Borsa İstanbul&apos;daki fırsatları LLM halüsinasyonları olmadan, %100 deterministik kurallara dayalı algoritmik skorlama motoruyla yakalayın.
             </p>
           </div>
 

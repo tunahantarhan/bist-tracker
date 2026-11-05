@@ -3,28 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Clock, LogIn } from 'lucide-react';
-
-// Safely decode JWT payload with proper Base64URL padding
-function isTokenExpired(token: string): boolean {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return false;
-
-    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4 !== 0) {
-      base64 += '=';
-    }
-
-    const decoded = window.atob(base64);
-    const payload = JSON.parse(decoded);
-    if (!payload.exp) return false;
-
-    return Date.now() >= payload.exp * 1000;
-  } catch {
-    // Do not falsely expire session if client-side decoding fails; rely on backend 401
-    return false;
-  }
-}
+import { clearSession, getAccessToken, getRefreshToken, isTokenExpired } from '@/lib/auth';
+import { refreshSession } from '@/services/api';
 
 export default function SessionGuard() {
   const router = useRouter();
@@ -34,53 +14,41 @@ export default function SessionGuard() {
 
   const isPublicRoute = pathname === '/' || pathname?.startsWith('/giris');
 
-  const clearSessionStorage = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user_slug');
-    localStorage.removeItem('is_admin');
-  };
-
   const triggerExpirationModal = useCallback(() => {
     if (isPublicRoute) return;
-    clearSessionStorage();
+    clearSession();
     setExpired(true);
   }, [isPublicRoute]);
 
+  // Leaving to a public route (e.g. the login page) clears a previous expiry
+  if (isPublicRoute && expired) setExpired(false);
+
   useEffect(() => {
     if (isPublicRoute) {
-      setExpired(false);
       hadTokenRef.current = false;
       return;
     }
 
-    const initialToken = localStorage.getItem('access_token');
+    const initialToken = getAccessToken();
 
-    if (!initialToken) {
+    if (!initialToken && !getRefreshToken()) {
       if (!expired) {
         router.replace('/giris');
       }
       return;
     }
 
-    if (isTokenExpired(initialToken)) {
-      triggerExpirationModal();
-      return;
-    }
-
     hadTokenRef.current = true;
 
-    const checkSession = () => {
-      const currentToken = localStorage.getItem('access_token');
-      if (!currentToken) {
-        if (hadTokenRef.current) {
-          triggerExpirationModal();
-        }
-        return;
-      }
-      if (isTokenExpired(currentToken)) {
-        triggerExpirationModal();
-      }
+    // An expired access token is not the end of the session: try the refresh token first
+    const checkSession = async () => {
+      const token = getAccessToken();
+      if (token && !isTokenExpired(token, 30)) return;
+      if (!token && !hadTokenRef.current) return;
+      if (getRefreshToken() && (await refreshSession())) return;
+      triggerExpirationModal();
     };
+    checkSession();
 
     const intervalId = setInterval(checkSession, 30000);
 
@@ -103,7 +71,7 @@ export default function SessionGuard() {
   }, [pathname, isPublicRoute, expired, router, triggerExpirationModal]);
 
   const handleRedirectToAuth = () => {
-    clearSessionStorage();
+    clearSession();
     setExpired(false);
     router.push('/giris');
   };

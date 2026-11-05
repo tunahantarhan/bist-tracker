@@ -2,12 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
-
-interface TickerItem {
-  symbol: string;
-  current_price: number;
-  change_pct: number;
-}
+import { fetchTicker, TickerItem } from '@/services/api';
 
 interface StockTickerProps {
   items?: { symbol: string; current_price: number; change_pct: number }[];
@@ -60,11 +55,7 @@ export default function StockTicker({ items }: StockTickerProps) {
 
     const fetchTickerData = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/api/v1/market/ticker', { cache: 'no-store' });
-        if (res.ok) {
-          const data = await res.json();
-          setInternalTickerData(data);
-        }
+        setInternalTickerData(await fetchTicker());
       } catch (error) {
         console.warn('Ticker data fetch warning:', error);
       }

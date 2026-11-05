@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -83,6 +83,64 @@ const getConditionLabel = (val: string) =>
 const getTargetTypeLabel = (val: string) =>
   TARGET_TYPES.find((t) => t.value === val)?.label || val;
 
+interface RuleFormValues {
+  name: string;
+  timeframe: string;
+  indicator1: string;
+  ind1Length: string;
+  condition: string;
+  targetType: 'static' | 'indicator';
+  staticValue: string;
+  indicator2: string;
+  ind2Length: string;
+  trendLookback: string;
+  trendMinPeak: string;
+  trendSlope: string;
+  trendMaxEnd: string;
+  scoreImpact: string;
+}
+
+const NEW_RULE_FORM: RuleFormValues = {
+  name: '',
+  timeframe: '4h',
+  indicator1: 'PRICE',
+  ind1Length: '9',
+  condition: '>',
+  targetType: 'indicator',
+  staticValue: '30',
+  indicator2: 'BOLLINGER_MIDDLE',
+  ind2Length: '14',
+  trendLookback: '60',
+  trendMinPeak: '60',
+  trendSlope: '',
+  trendMaxEnd: '30',
+  scoreImpact: '10.00',
+};
+
+const str = (v: unknown, fallback: string) => (v === undefined || v === null ? fallback : String(v));
+
+function getInitialForm(rule?: Rule | null): RuleFormValues {
+  if (!rule) return NEW_RULE_FORM;
+  const p1 = rule.indicator_1_params ?? {};
+  const p2 = rule.indicator_2_params ?? {};
+  return {
+    name: rule.name || '',
+    timeframe: rule.timeframe || '4h',
+    indicator1: rule.indicator_1 || 'SMA',
+    ind1Length: str(p1.length, '14'),
+    condition: rule.condition || '>',
+    targetType: rule.target_type || 'indicator',
+    staticValue: str(rule.static_value, '30'),
+    indicator2: rule.indicator_2 || 'SMA',
+    ind2Length: str(p2.length, '14'),
+    trendLookback: str(p2.lookback, '60'),
+    trendMinPeak: str(p2.min_peak, '60'),
+    trendSlope: str(p2.slope, ''),
+    trendMaxEnd: str(p2.max_trend_end, '30'),
+    scoreImpact: str(rule.score_impact, rule.is_primary_filter ? '25.00' : '10.00'),
+  };
+}
+
 export default function CreateRuleDialog({ 
   onRuleCreated, 
   editingRule, 
@@ -125,42 +183,31 @@ export default function CreateRuleDialog({
 
   const [scoreImpact, setScoreImpact] = useState('25.00');
 
-  useEffect(() => {
-    if (editingRule && open) {
-      setName(editingRule.name || '');
-      setTimeframe(editingRule.timeframe || '4h');
-      setIndicator1(editingRule.indicator_1 || 'SMA');
-      setInd1Length(editingRule.indicator_1_params?.length?.toString() || '14');
-      setCondition(editingRule.condition || '>');
-      setTargetType((editingRule.target_type as 'static' | 'indicator') || 'indicator');
-      setStaticValue(editingRule.static_value !== null && editingRule.static_value !== undefined ? String(editingRule.static_value) : '30');
-      setIndicator2(editingRule.indicator_2 || 'SMA');
-      setInd2Length(editingRule.indicator_2_params?.length?.toString() || '14');
+  const applyForm = (f: RuleFormValues) => {
+    setName(f.name);
+    setTimeframe(f.timeframe);
+    setIndicator1(f.indicator1);
+    setInd1Length(f.ind1Length);
+    setCondition(f.condition);
+    setTargetType(f.targetType);
+    setStaticValue(f.staticValue);
+    setIndicator2(f.indicator2);
+    setInd2Length(f.ind2Length);
+    setTrendLookback(f.trendLookback);
+    setTrendMinPeak(f.trendMinPeak);
+    setTrendSlope(f.trendSlope);
+    setTrendMaxEnd(f.trendMaxEnd);
+    setScoreImpact(f.scoreImpact);
+  };
 
-      if (editingRule.indicator_2_params) {
-        setTrendLookback(editingRule.indicator_2_params.lookback?.toString() || '60');
-        setTrendMinPeak(editingRule.indicator_2_params.min_peak?.toString() || '60');
-        setTrendMaxEnd(editingRule.indicator_2_params.max_trend_end?.toString() || '30');
-        setTrendSlope(editingRule.indicator_2_params.slope !== undefined && editingRule.indicator_2_params.slope !== null ? String(editingRule.indicator_2_params.slope) : '');
-      }
-      setScoreImpact(editingRule.score_impact !== undefined ? String(editingRule.score_impact) : (isEditingPrimary ? '25.00' : '10.00'));
-    } else if (!editingRule && open) {
-      setName('');
-      setTimeframe('4h');
-      setIndicator1('SMA');
-      setInd1Length('9');
-      setCondition('>');
-      setTargetType('indicator');
-      setStaticValue('30');
-      setIndicator2('SMA');
-      setInd2Length('14');
-      setTrendLookback('60');
-      setTrendMinPeak('60');
-      setTrendSlope('');
-      setTrendMaxEnd('30');
-      setScoreImpact('10.00');
-    }
-  }, [editingRule, open, isEditingPrimary]);
+  // Reset the form whenever the dialog opens (or switches to another rule).
+  // Done during render instead of in an effect to avoid a cascading re-render.
+  const formKey = open ? `open-${editingRule?.id ?? 'new'}` : 'closed';
+  const [appliedFormKey, setAppliedFormKey] = useState('closed');
+  if (formKey !== appliedFormKey) {
+    setAppliedFormKey(formKey);
+    if (open) applyForm(getInitialForm(editingRule));
+  }
 
   // Auto-adjust default lookback when timeframe changes for the primary filter
   const handlePrimaryTimeframeChange = (newTf: string) => {
@@ -215,7 +262,7 @@ export default function CreateRuleDialog({
     const len = parseInt(lengthVal, 10) || 14;
     if (ind === 'SMA' || ind === 'EMA' || ind === 'RSI') return { length: len };
     if (ind === 'RSI_TRENDLINE') {
-      const p: Record<string, any> = {
+      const p: Record<string, number> = {
         length: 14,
         lookback: parseInt(trendLookback, 10) || 60,
         min_peak: parseFloat(trendMinPeak) || 60.0,
@@ -239,7 +286,7 @@ export default function CreateRuleDialog({
     setLoading(true);
     
     // Primary filter keeps dynamic timeframe and trendline parameters
-    const payload = isEditingPrimary ? {
+    const payload: Omit<Rule, 'id' | 'created_at' | 'updated_at'> = isEditingPrimary ? {
       name,
       description: name,
       timeframe,
@@ -272,7 +319,7 @@ export default function CreateRuleDialog({
       if (editingRule && editingRule.id) {
         await updateRule(editingRule.id, payload);
       } else {
-        await createRule(payload as any);
+        await createRule(payload);
       }
 
       handleOpenChange(false);
@@ -280,6 +327,7 @@ export default function CreateRuleDialog({
       if (!editingRule) setName('');
     } catch (error) {
       console.error('Failed to save rule:', error);
+      alert(error instanceof Error ? error.message : 'Kural kaydedilemedi.');
     } finally {
       setLoading(false);
     }

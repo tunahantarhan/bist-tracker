@@ -35,20 +35,16 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  const loadData = async () => {
-    try {
+  // Poll inbox and unread badge every 15s
+  useEffect(() => {
+    const loadData = async () => {
       const [list, count] = await Promise.all([
-        fetchNotifications(30).catch(() => []),
-        fetchUnreadNotificationCount().catch(() => 0),
+        fetchNotifications(30).catch(() => [] as AppNotification[]),
+        fetchUnreadNotificationCount(),
       ]);
       setNotifications(list);
       setUnreadCount(count);
-    } catch (err) {
-      console.warn('Notifications fetch warning:', err);
-    }
-  };
-
-  useEffect(() => {
+    };
     loadData();
     const timer = setInterval(loadData, 15000);
     return () => clearInterval(timer);
