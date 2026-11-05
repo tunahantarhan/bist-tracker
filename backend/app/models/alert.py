@@ -1,13 +1,7 @@
-from datetime import datetime, timezone, timedelta
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from app.core.database import Base
-
-TR_TZ = timezone(timedelta(hours=3))
-
-def get_tr_now():
-    """Returns current Turkey local time as timezone-naive datetime."""
-    return datetime.now(TR_TZ).replace(tzinfo=None)
+from app.core.market_hours import now_tr_naive
 
 
 class UserCustomAlert(Base):
@@ -20,7 +14,8 @@ class UserCustomAlert(Base):
     timeframe = Column(String(10), default="15m")
     is_active = Column(Boolean, default=True)
     last_triggered_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=get_tr_now)
+    # Stored as naive Turkey local time (column has no timezone)
+    created_at = Column(DateTime, default=now_tr_naive)
 
     user = relationship("User", backref="custom_alerts")
     rule = relationship("Rule")

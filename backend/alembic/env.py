@@ -5,7 +5,7 @@ from alembic import context
 # BIST Tracker settings and models are imported
 from app.core.config import settings
 from app.core.database import Base
-import app.models
+import app.models  # noqa: F401  (registers all models on Base.metadata)
 
 config = context.config
 

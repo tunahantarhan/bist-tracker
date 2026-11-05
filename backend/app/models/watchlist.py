@@ -1,11 +1,12 @@
 from datetime import datetime
-from sqlalchemy import String, Integer, ForeignKey, DateTime
+from sqlalchemy import String, Integer, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import text
 from app.core.database import Base
 
 class Watchlist(Base):
     __tablename__ = "watchlists"
+    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_watchlists_user_symbol"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

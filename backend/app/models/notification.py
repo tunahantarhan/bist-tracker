@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, text
+from sqlalchemy import Integer, String, Text, Boolean, DateTime, ForeignKey, text
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.core.database import Base
 
@@ -31,9 +31,7 @@ class Notification(Base):
     rule: Mapped["Rule"] = relationship("Rule", back_populates="notifications")
     user: Mapped["User"] = relationship("User")
 
-# Alias for Notification model to avoid naming conflicts
-NotificationLog = Notification
-
+# Not used by the app yet; kept so the existing table stays in the Alembic metadata
 class NotificationChannel(Base):
     __tablename__ = "notification_channels"
 

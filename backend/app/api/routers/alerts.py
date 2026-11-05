@@ -1,24 +1,24 @@
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import and_, delete, select
 
 from app.core.database import get_db
+from app.core.market_hours import now_tr_naive
 from app.models.alert import UserCustomAlert
+from app.models.rule import Rule
 from app.models.user import User
 from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/alerts", tags=["User Custom Alerts"])
 
-TR_TZ = timezone(timedelta(hours=3))
-
 
 class AlertCreate(BaseModel):
-    symbol: str
+    symbol: str = Field(min_length=2, max_length=10, pattern=r"^[A-Za-z0-9]+$")
     rule_id: Optional[int] = None
-    timeframe: Optional[str] = "15m"
+    timeframe: Optional[Literal["5m", "15m", "1h", "4h", "1d"]] = "15m"
 
 
 class AlertResponse(BaseModel):
@@ -30,8 +30,7 @@ class AlertResponse(BaseModel):
     created_at: datetime
     last_triggered_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("", response_model=List[AlertResponse])
@@ -56,23 +55,23 @@ async def create_custom_alert(
 ):
     clean_sym = alert_in.symbol.strip().upper()
     
+    if alert_in.rule_id is not None and not await db.get(Rule, alert_in.rule_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kural bulunamadı")
+
+    # One alert per (symbol, rule); different rules on the same timeframe are allowed
+    rule_filter = (
+        UserCustomAlert.rule_id.is_(None) if alert_in.rule_id is None else UserCustomAlert.rule_id == alert_in.rule_id
+    )
     existing = await db.execute(
-        select(UserCustomAlert).where(
-            and_(
-                UserCustomAlert.user_id == current_user.id,
-                UserCustomAlert.symbol == clean_sym,
-                UserCustomAlert.timeframe == alert_in.timeframe
-            )
+        select(UserCustomAlert.id).where(
+            and_(UserCustomAlert.user_id == current_user.id, UserCustomAlert.symbol == clean_sym, rule_filter)
         )
     )
-    if existing.scalar_one_or_none():
+    if existing.first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{clean_sym} için {alert_in.timeframe} periyodunda zaten aktif bir alarmınız var."
+            detail=f"{clean_sym} için bu kurala zaten bir alarmınız var.",
         )
-
-    # Use Turkey Time (GMT+3) without offset for Postgres compatibility
-    now_tr = datetime.now(TR_TZ).replace(tzinfo=None)
 
     new_alert = UserCustomAlert(
         user_id=current_user.id,
@@ -80,7 +79,7 @@ async def create_custom_alert(
         rule_id=alert_in.rule_id,
         timeframe=alert_in.timeframe or "15m",
         is_active=True,
-        created_at=now_tr
+        created_at=now_tr_naive(),
     )
     db.add(new_alert)
     await db.commit()
@@ -94,23 +93,17 @@ async def delete_alert_by_symbol(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Removes the alert by symbol name (used for toggle action on detail view)."""
+    """Removes every alert the user has for the symbol."""
     clean_sym = symbol.strip().upper()
     res = await db.execute(
-        select(UserCustomAlert).where(
-            and_(
-                UserCustomAlert.user_id == current_user.id,
-                UserCustomAlert.symbol == clean_sym
-            )
+        delete(UserCustomAlert).where(
+            and_(UserCustomAlert.user_id == current_user.id, UserCustomAlert.symbol == clean_sym)
         )
     )
-    alert = res.scalar_one_or_none()
-    if not alert:
+    if res.rowcount == 0:
         raise HTTPException(status_code=404, detail="Alarm bulunamadı")
-
-    await db.delete(alert)
     await db.commit()
-    return {"status": "success", "message": f"{clean_sym} alarmı silindi"}
+    return {"status": "success", "message": f"{clean_sym} alarmları silindi"}
 
 
 @router.delete("/{alert_id}")
