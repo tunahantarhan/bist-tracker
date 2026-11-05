@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import RuleList from '@/components/rules/RuleList';
 import CreateRuleDialog from '@/components/rules/CreateRuleDialog';
+import PrimaryFilterCard from '@/components/rules/PrimaryFilterCard';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import { 
-  fetchMarketData, fetchUniverse, fetchActiveUniverse, fetchRules, deleteRule,
+  fetchMarketData, fetchUniverse, fetchActiveUniverse, fetchRules, deleteRule, updateRule,
   updateActiveUniverse, MarketData, fetchAdminStats, 
   fetchAdminUsers, updateAdminUser, AdminStats, AdminUserItem 
 } from '@/services/api';
@@ -36,6 +37,9 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>(null);
   const [rules, setRules] = useState<Rule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedRuleIds, setSelectedRuleIds] = useState<number[]>([]);
+  // Rule being edited in the dialog (null = dialog closed)
+  const [editingRule, setEditingRule] = useState<Rule | null>(null);
 
   // Mobile drawer state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -53,6 +57,7 @@ export default function AdminDashboard() {
   const [universe, setUniverse] = useState<{ symbol: string; name: string }[]>([]);
   const [activeUniverseTokens, setActiveUniverseTokens] = useState<string[]>([]);
   const [isSavingUniverse, setIsSavingUniverse] = useState(false);
+  const [universeQuery, setUniverseQuery] = useState('');
 
   const [previewSymbol, setPreviewSymbol] = useState('GARAN');
   const [previewConfig, setPreviewConfig] = useState<{ interval: string; period: string }>({
@@ -134,13 +139,34 @@ export default function AdminDashboard() {
     return () => controller.abort();
   }, [activeTab, previewSymbol, previewConfig, rules]);
 
-  const handleDeleteRule = async (ruleId: number) => {
+  const primaryRule = rules.find((r) => r.is_primary_filter) ?? null;
+  const scoringRules = rules.filter((r) => !r.is_primary_filter);
+
+  const refreshAfterRuleChange = () => {
+    loadRules();
+    loadStats();
+  };
+
+  const handleDeleteRules = async (ids: number[]) => {
     try {
-      await deleteRule(ruleId);
-      loadRules();
-      loadStats();
+      await Promise.all(ids.map((id) => deleteRule(id)));
+      setSelectedRuleIds((prev) => prev.filter((id) => !ids.includes(id)));
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Kural silinemedi');
+    } finally {
+      refreshAfterRuleChange();
+    }
+  };
+
+  const handleToggleRule = async (id: number, isActive: boolean) => {
+    // Optimistic update; reverted by the reload if the request fails
+    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, is_active: isActive } : r)));
+    try {
+      await updateRule(id, { is_active: isActive });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Kural güncellenemedi');
+    } finally {
+      refreshAfterRuleChange();
     }
   };
 
@@ -190,6 +216,12 @@ export default function AdminDashboard() {
       setUpdatingUserId(null);
     }
   };
+
+  const universeQueryNorm = universeQuery.trim().toLocaleLowerCase('tr-TR');
+  // Chips shown in the universe tab (filtered by the tab's own search box)
+  const universeChips = universeQueryNorm
+    ? universe.filter((u) => u.symbol.toLocaleLowerCase('tr-TR').includes(universeQueryNorm) || u.name.toLocaleLowerCase('tr-TR').includes(universeQueryNorm))
+    : universe;
 
   const filteredUsers = usersList.filter((u) => {
     const q = userSearchQuery.toLowerCase();
@@ -351,10 +383,18 @@ export default function AdminDashboard() {
             </div>
 
             {activeTab === 'rules' && (
-              <CreateRuleDialog onRuleCreated={() => { loadRules(); loadStats(); }} />
+              <CreateRuleDialog onRuleCreated={refreshAfterRuleChange} />
             )}
           </div>
         </header>
+
+        {/* Shared edit dialog for the primary filter and scoring rules */}
+        <CreateRuleDialog
+          isOpen={editingRule !== null}
+          onOpenChange={(open) => { if (!open) setEditingRule(null); }}
+          editingRule={editingRule}
+          onRuleCreated={refreshAfterRuleChange}
+        />
 
         {/* Scrollable Content Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-8">
@@ -451,7 +491,20 @@ export default function AdminDashboard() {
                     Kurallar yükleniyor...
                   </div>
                 ) : (
-                  <RuleList rules={rules} onDeleteRule={handleDeleteRule} />
+                  <>
+                    {primaryRule && (
+                      <PrimaryFilterCard rule={primaryRule} onEdit={setEditingRule} onToggle={handleToggleRule} />
+                    )}
+                    <RuleList
+                      rules={scoringRules}
+                      onDeleteRule={(id) => handleDeleteRules([id])}
+                      onDeleteMultiple={handleDeleteRules}
+                      onSelectRules={setSelectedRuleIds}
+                      selectedRules={selectedRuleIds}
+                      onEditRule={setEditingRule}
+                      onToggleRule={handleToggleRule}
+                    />
+                  </>
                 )}
               </div>
 
@@ -624,7 +677,58 @@ export default function AdminDashboard() {
                     Kullanıcı bulunamadı.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <>
+                  {/* Mobile: one card per user */}
+                  <ul className="space-y-3 md:hidden">
+                    {filteredUsers.map((user) => {
+                      const isMutating = updatingUserId === user.id;
+                      return (
+                        <li key={user.id} className="rounded-xl border border-slate-800 bg-[#161b26]/60 p-3.5 space-y-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-xs font-semibold text-slate-200">{user.email}</div>
+                              <div className="text-[11px] text-slate-500">
+                                {[user.first_name, user.last_name].filter(Boolean).join(' ') || '—'} · {user.created_at}
+                              </div>
+                            </div>
+                            {user.is_admin && (
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 font-mono text-[10px] font-bold text-purple-300">
+                                <Shield className="h-3 w-3" />
+                                Yönetici
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select
+                              disabled={isMutating}
+                              value={user.tier}
+                              onChange={(e) => handleUpdateUserTier(user.id, e.target.value as AdminUserItem['tier'])}
+                              className="min-w-0 flex-1 cursor-pointer rounded-md border border-slate-700 bg-[#12161f] px-2 py-2 font-mono text-[11px] font-bold text-slate-200 outline-none"
+                            >
+                              <option value="FREE">Ücretsiz (3 Hisse)</option>
+                              <option value="STANDARD">Standart (10 Hisse)</option>
+                              <option value="PREMIUM">Premium (50 Hisse)</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={isMutating}
+                              onClick={() => handleToggleUserStatus(user.id, user.is_active)}
+                              className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-2 text-[11px] font-semibold transition-colors ${
+                                user.is_active
+                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                                  : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                              }`}
+                            >
+                              {user.is_active ? <UserCheck className="h-3.5 w-3.5" /> : <UserX className="h-3.5 w-3.5" />}
+                              {user.is_active ? 'Aktif' : 'Askıda'}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  <div className="hidden overflow-x-auto md:block">
                     <table className="w-full text-left text-xs min-w-[640px]">
                       <thead>
                         <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400 uppercase tracking-wider">
@@ -725,6 +829,7 @@ export default function AdminDashboard() {
                       </tbody>
                     </table>
                   </div>
+                  </>
                 )}
               </div>
             </div>
@@ -748,14 +853,40 @@ export default function AdminDashboard() {
                     type="button"
                     onClick={handleSaveUniverse}
                     disabled={isSavingUniverse}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-colors cursor-pointer w-full sm:w-auto"
+                    className="hidden cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-colors hover:bg-emerald-500 disabled:opacity-60 sm:inline-flex"
                   >
-                    {isSavingUniverse ? 'Kaydediliyor...' : 'Evreni Kaydet'}
+                    {isSavingUniverse ? 'Kaydediliyor...' : `Evreni Kaydet (${activeUniverseTokens.length})`}
                   </button>
                 </div>
 
-                <div className="flex flex-wrap gap-2 sm:gap-2.5 justify-center mt-6 sm:mt-8 pb-4">
-                  {universe.map((item) => {
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={universeQuery}
+                      onChange={(e) => setUniverseQuery(e.target.value)}
+                      placeholder="Sembol veya şirket ara..."
+                      className="w-full rounded-lg border border-slate-700/80 bg-[#161b26] py-2 pl-9 pr-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 text-[11px] sm:justify-end">
+                    <span className="font-mono text-slate-400">
+                      <strong className="text-emerald-400">{activeUniverseTokens.length}</strong> / {universe.length} seçili
+                    </span>
+                    <div className="flex gap-1.5">
+                      <button type="button" onClick={() => setActiveUniverseTokens(universe.map((u) => u.symbol))} className="cursor-pointer rounded-md border border-slate-700 px-2.5 py-1.5 text-slate-300 hover:bg-slate-800">
+                        Tümü
+                      </button>
+                      <button type="button" onClick={() => setActiveUniverseTokens([])} className="cursor-pointer rounded-md border border-slate-700 px-2.5 py-1.5 text-slate-300 hover:bg-slate-800">
+                        Temizle
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 sm:gap-2.5 justify-center mt-5 pb-4">
+                  {universeChips.map((item) => {
                     const sym = item.symbol;
                     const isActive = activeUniverseTokens.includes(sym);
                     return (
@@ -775,6 +906,18 @@ export default function AdminDashboard() {
                       </button>
                     );
                   })}
+                </div>
+
+                {/* Mobile: sticky save bar stays reachable while scrolling through ~100 chips */}
+                <div className="sticky bottom-0 -mx-4 -mb-4 border-t border-slate-800 bg-[#12161f]/95 px-4 py-3 backdrop-blur sm:hidden">
+                  <button
+                    type="button"
+                    onClick={handleSaveUniverse}
+                    disabled={isSavingUniverse}
+                    className="w-full cursor-pointer rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    {isSavingUniverse ? 'Kaydediliyor...' : `Evreni Kaydet (${activeUniverseTokens.length})`}
+                  </button>
                 </div>
               </div>
             </div>

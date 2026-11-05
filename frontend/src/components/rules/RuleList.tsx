@@ -1,6 +1,7 @@
 'use client';
 
 import { Rule } from '@/types';
+import { tfLabel } from '@/lib/timeframes';
 import { Trash2, Sliders, Clock, Pencil, CheckSquare, Square, Check } from 'lucide-react';
 
 interface RuleListProps {
@@ -12,14 +13,6 @@ interface RuleListProps {
   onEditRule?: (rule: Rule) => void;
   onToggleRule?: (id: number, isActive: boolean) => void;
 }
-
-const TIMEFRAME_BADGE: Record<string, string> = {
-  '5m': '5 DK',
-  '15m': '15 DK',
-  '1h': '1 SAAT',
-  '4h': '4 SAAT',
-  '1d': '1 GÜN',
-};
 
 export default function RuleList({ 
   rules, 
@@ -69,11 +62,11 @@ export default function RuleList({
   return (
     <div className="w-full overflow-hidden rounded-xl border border-slate-800/80 bg-[#12161f]/90 shadow-2xl backdrop-blur-md flex flex-col">
       <div className="border-b border-slate-800 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-[#161b26] to-[#12161f]">
-        <div className="flex items-center space-x-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="h-8 w-8 rounded-lg bg-blue-600/15 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
             <Sliders className="h-4 w-4" />
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-sm font-bold tracking-wider text-slate-200 uppercase truncate">
               Dinamik Puanlama Kuralları
             </h2>
@@ -127,7 +120,7 @@ export default function RuleList({
           </div>
         ) : (
           rules.map((rule) => {
-            const tfLabel = TIMEFRAME_BADGE[rule.timeframe || '1d'] || (rule.timeframe || '1D').toUpperCase();
+            const timeframeBadge = tfLabel(rule.timeframe || '1d', 'badge');
             const targetText =
               rule.target_type === 'static'
                 ? rule.static_value
@@ -186,7 +179,7 @@ export default function RuleList({
 
                       <span className="inline-flex items-center space-x-1 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[10px] font-mono uppercase text-slate-300 shrink-0">
                         <Clock className="h-2.5 w-2.5 text-slate-400" />
-                        <span>{tfLabel}</span>
+                        <span>{timeframeBadge}</span>
                       </span>
 
                       <span className="rounded bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-[10px] font-mono font-bold text-blue-300 shrink-0">

@@ -340,9 +340,13 @@ export default function CreateRuleDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       {!isControlled && (
         <DialogTrigger>
-          <span className="inline-flex items-center space-x-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all duration-200 hover:bg-blue-500 hover:shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:-translate-y-0.5 active:translate-y-0 cursor-pointer">
+          <span
+            title="Yeni Puanlama Kuralı Ekle"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-2.5 py-2 text-xs font-semibold text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all duration-200 hover:bg-blue-500 hover:shadow-[0_0_20px_rgba(37,99,235,0.6)] cursor-pointer sm:px-4 sm:py-2.5"
+          >
             <Plus className="h-4 w-4" />
-            <span>Yeni Puanlama Kuralı Ekle</span>
+            <span className="sm:hidden">Kural</span>
+            <span className="hidden sm:inline">Yeni Puanlama Kuralı Ekle</span>
           </span>
         </DialogTrigger>
       )}
