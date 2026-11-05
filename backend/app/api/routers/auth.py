@@ -1,52 +1,69 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from jose import jwt, JWTError
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.config import settings
 from app.core.security import (
-    get_password_hash,
-    verify_password,
+    REFRESH_TOKEN_TYPE,
     create_access_token,
     create_refresh_token,
+    decode_token,
+    get_password_hash,
+    verify_password,
 )
 from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin, UserResponse, Token, TokenRefreshRequest
-from app.api.deps import get_current_user
+from app.schemas.user import Token, TokenRefreshRequest, UserCreate, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+def _issue_tokens(user: User) -> dict:
+    subject = str(user.id)
+    return {
+        "access_token": create_access_token(subject),
+        "refresh_token": create_refresh_token(subject),
+        "token_type": "bearer",
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "is_admin": bool(user.is_admin),
+    }
+
+
+async def _get_user_by_email(db: AsyncSession, email: str) -> User | None:
+    result = await db.execute(select(User).where(func.lower(User.email) == email.lower()))
+    return result.scalar_one_or_none()
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    if result.scalars().first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bu e-posta adresi zaten kullanılıyor."
-        )
+    if await _get_user_by_email(db, user_in.email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bu e-posta adresi zaten kullanılıyor.")
 
     new_user = User(
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
         first_name=user_in.first_name,
         last_name=user_in.last_name,
-        terms_accepted_at=datetime.now(timezone.utc)
+        terms_accepted_at=datetime.now(timezone.utc),
     )
-
     db.add(new_user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Concurrent registration with the same email
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bu e-posta adresi zaten kullanılıyor.") from None
     await db.refresh(new_user)
-
     return new_user
 
 
 @router.post("/login", response_model=Token)
 async def login(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    user = result.scalars().first()
+    user = await _get_user_by_email(db, user_in.email)
 
     if not user or not verify_password(user_in.password, user.hashed_password):
         raise HTTPException(
@@ -54,18 +71,10 @@ async def login(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
             detail="E-posta adresi veya şifre hatalı.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hesabınız askıya alınmış.")
 
-    access_token = create_access_token(data={"sub": str(user.id)})
-    refresh_token = create_refresh_token(data={"sub": str(user.id)})
-
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "is_admin": bool(getattr(user, "is_admin", False)),
-    }
+    return _issue_tokens(user)
 
 
 @router.post("/refresh", response_model=Token)
@@ -76,32 +85,17 @@ async def refresh_access_token(body: TokenRefreshRequest, db: AsyncSession = Dep
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    try:
-        payload = jwt.decode(body.refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id = payload.get("sub")
-        token_type = payload.get("token_type")
-
-        if not user_id or token_type != "refresh":
-            raise credentials_exception
-    except JWTError:
+    user_id = decode_token(body.refresh_token, REFRESH_TOKEN_TYPE)
+    if user_id is None:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == int(user_id)))
-    user = result.scalars().first()
-    if not user or not getattr(user, "is_active", True):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
         raise credentials_exception
 
-    new_access_token = create_access_token(data={"sub": str(user.id)})
-    new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    return _issue_tokens(user)
 
-    return {
-        "access_token": new_access_token,
-        "refresh_token": new_refresh_token,
-        "token_type": "bearer",
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "is_admin": bool(getattr(user, "is_admin", False)),
-    }
 
 @router.get("/me", response_model=UserResponse)
 async def get_my_profile(current_user: User = Depends(get_current_user)):

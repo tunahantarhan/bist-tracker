@@ -1,36 +1,55 @@
-from pydantic import BaseModel, EmailStr, field_validator
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
 
 class UserBase(BaseModel):
     email: EmailStr
 
-class UserCreate(UserBase):
-    password: str
-    terms_accepted: bool
-    first_name: str
-    last_name: str
-
-    @field_validator('terms_accepted')
+    @field_validator("email")
     @classmethod
-    def check_terms(cls, v):
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class UserCreate(UserBase):
+    password: str = Field(min_length=8, max_length=128)
+    terms_accepted: bool
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def strip_names(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Ad ve soyad boş bırakılamaz.")
+        return v
+
+    @field_validator("terms_accepted")
+    @classmethod
+    def check_terms(cls, v: bool) -> bool:
         if not v:
             raise ValueError("Sisteme kayıt olmak için yasal uyarıyı kabul etmelisiniz.")
         return v
 
+
 class UserLogin(UserBase):
     password: str
 
-class UserResponse(UserBase):
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     email: EmailStr
     is_active: bool
+    is_admin: bool
     tier: str
     terms_accepted_at: datetime
-    first_name: str
-    last_name: str
-    
-    class Config:
-        from_attributes = True
+    first_name: str | None = None
+    last_name: str | None = None
+
 
 class Token(BaseModel):
     access_token: str
@@ -43,3 +62,9 @@ class Token(BaseModel):
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
+
+
+class AdminUserUpdate(BaseModel):
+    tier: str | None = None
+    is_active: bool | None = None
+    is_admin: bool | None = None
