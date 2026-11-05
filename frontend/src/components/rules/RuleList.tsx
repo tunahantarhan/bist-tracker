@@ -131,7 +131,7 @@ export default function RuleList({
             return (
               <div
                 key={rule.id}
-                className={`group flex flex-col xl:flex-row xl:items-center justify-between p-3.5 rounded-xl border transition-all duration-200 gap-3 ${
+                className={`group flex items-start xl:items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all duration-200 gap-2 sm:gap-3 ${
                   isSelected 
                     ? 'border-blue-500/40 bg-blue-950/20 shadow-[0_0_15px_rgba(37,99,235,0.08)]' 
                     : 'border-slate-800/80 bg-[#161b26]/50 hover:border-slate-700 hover:bg-[#1a202e]'
@@ -195,7 +195,7 @@ export default function RuleList({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end space-x-1.5 border-t border-slate-800/80 xl:border-0 pt-2 xl:pt-0 shrink-0">
+                <div className="flex flex-col sm:flex-row items-center gap-1 shrink-0 -mr-1 -mt-1 xl:m-0">
                   {onEditRule && (
                     <button
                       type="button"

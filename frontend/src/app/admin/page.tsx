@@ -204,6 +204,11 @@ export default function AdminDashboard() {
   };
 
   const handleToggleUserStatus = async (userId: number, currentStatus: boolean) => {
+    const email = usersList.find((u) => u.id === userId)?.email ?? 'Bu kullanıcı';
+    const question = currentStatus
+      ? `${email} hesabı askıya alınsın mı? Kullanıcı giriş yapamaz ve bildirim alamaz.`
+      : `${email} hesabı yeniden aktifleştirilsin mi?`;
+    if (!window.confirm(question)) return;
     setUpdatingUserId(userId);
     try {
       await updateAdminUser(userId, { is_active: !currentStatus });
@@ -691,12 +696,24 @@ export default function AdminDashboard() {
                                 {[user.first_name, user.last_name].filter(Boolean).join(' ') || '—'} · {user.created_at}
                               </div>
                             </div>
-                            {user.is_admin && (
-                              <span className="inline-flex shrink-0 items-center gap-1 rounded border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 font-mono text-[10px] font-bold text-purple-300">
-                                <Shield className="h-3 w-3" />
-                                Yönetici
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <span
+                                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-[10px] font-bold ${
+                                  user.is_active
+                                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                                    : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                                }`}
+                              >
+                                <span className={`h-1.5 w-1.5 rounded-full ${user.is_active ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                                {user.is_active ? 'Aktif' : 'Askıda'}
                               </span>
-                            )}
+                              {user.is_admin && (
+                                <span className="inline-flex items-center gap-1 rounded border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 font-mono text-[10px] font-bold text-purple-300">
+                                  <Shield className="h-3 w-3" />
+                                  Yönetici
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-2">
                             <select
@@ -713,14 +730,14 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={isMutating}
                               onClick={() => handleToggleUserStatus(user.id, user.is_active)}
-                              className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-2 text-[11px] font-semibold transition-colors ${
+                              className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-2 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
                                 user.is_active
-                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                                  : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                                  ? 'border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20'
+                                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
                               }`}
                             >
-                              {user.is_active ? <UserCheck className="h-3.5 w-3.5" /> : <UserX className="h-3.5 w-3.5" />}
-                              {user.is_active ? 'Aktif' : 'Askıda'}
+                              {user.is_active ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
+                              {user.is_active ? 'Askıya Al' : 'Aktifleştir'}
                             </button>
                           </div>
                         </li>
