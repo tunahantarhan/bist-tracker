@@ -1,7 +1,10 @@
+import logging
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from typing import Dict, Any, Tuple, List
+
+logger = logging.getLogger(__name__)
 
 class RuleEngine:
     @staticmethod
@@ -98,7 +101,7 @@ class RuleEngine:
         current_trend_val = trend_values[n - 1]
 
         # Rule: The tip of the trend must have fallen into the defined bottom region (0-40)
-        is_low_enough = current_trend_val <= max_trend_end
+        is_low_enough = bool(current_trend_val <= max_trend_end)
 
         meta = {
             "peak_rsi": round(y1, 2),
@@ -114,7 +117,7 @@ class RuleEngine:
 
     @classmethod
     def get_indicator_series(cls, df: pd.DataFrame, indicator: str, params: Dict[str, Any] | None) -> pd.Series | None:
-        if df.empty or len(df) < 5:  # En azından kapanış verisi alacak kadar mum olmalı
+        if df.empty or len(df) < 5:  # Need at least a few candles to compute anything
             return None
 
         params = params or {}
@@ -251,6 +254,23 @@ class RuleEngine:
             is_primary = bool(getattr(rule, "is_primary_filter", False))
             target_df = (dataframes_by_tf or {}).get(tf, default_df)
 
+            # Shared descriptive fields so the UI can render "RSI 32.75 < 30.00" style explanations
+            base_item: Dict[str, Any] = {
+                "id": rule.id,
+                "name": rule.name,
+                "timeframe": tf,
+                "is_primary_filter": is_primary,
+                "condition_text": rule.description or rule.name,
+                "condition": rule.condition,
+                "target_type": rule.target_type,
+                "indicator_1": rule.indicator_1,
+                "indicator_1_params": rule.indicator_1_params or {},
+                "indicator_2": rule.indicator_2,
+                "indicator_2_params": rule.indicator_2_params or {},
+                "static_value": rule.static_value,
+                "score_impact": round(float(rule.score_impact), 2),
+            }
+
             try:
                 is_met, val_1, val_2, meta = cls.evaluate_single_rule(target_df, rule)
                 if is_primary and not is_met:
@@ -260,31 +280,22 @@ class RuleEngine:
                 total_score += impact
 
                 breakdown.append({
-                    "id": rule.id,
-                    "name": rule.name,
-                    "timeframe": tf,
-                    "is_primary_filter": is_primary,
-                    "condition_text": rule.description or rule.name,
+                    **base_item,
                     "is_met": is_met,
-                    "score_impact": round(float(rule.score_impact), 2),
                     "earned_score": round(impact, 2),
                     "current_value": val_1,
                     "target_value": val_2,
                     "slope": meta.get("slope"),
                     "peak_rsi": meta.get("peak_rsi"),
+                    "peak_qualifies": meta.get("peak_qualifies"),
                 })
             except Exception as e:
                 if is_primary:
                     all_primary_filters_passed = False
-                print(f"Error evaluating rule ID {rule.id} ({rule.name}): {e}")
+                logger.warning("Rule %s (%s) evaluation failed: %s", rule.id, rule.name, e)
                 breakdown.append({
-                    "id": rule.id,
-                    "name": rule.name,
-                    "timeframe": tf,
-                    "is_primary_filter": is_primary,
-                    "condition_text": rule.description or rule.name,
+                    **base_item,
                     "is_met": False,
-                    "score_impact": round(float(rule.score_impact), 2),
                     "earned_score": 0.0,
                     "error": str(e),
                 })
