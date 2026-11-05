@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import StockSearch from '@/components/ui/StockSearch';
 import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
 import ScoreGauge from '@/components/ui/ScoreGauge';
 import {
-  API_URL,
   fetchMarketData,
+  fetchTicker,
+  TickerItem,
   MarketData,
   fetchWatchlist,
   addToWatchlist,
@@ -26,18 +27,9 @@ import {
 import { useRouter } from 'next/navigation';
 import StockTicker from '@/components/ui/StockTicker';
 import MacroKpiGrid from '@/components/ui/MacroKpiGrid';
-
-interface TickerItem {
-  symbol: string;
-  current_price: number;
-  change_pct: number;
-}
-
-const TICKER_NAMES: Record<string, string> = {
-  "THYAO": "Türk Hava Yolları A.O.",
-  "KCHOL": "Koç Holding A.Ş.",
-  "GARAN": "Garanti BBVA"
-};
+import RuleConditionText from '@/components/rules/RuleConditionText';
+import { clearSession, getAccessToken, getUserSlug, isAdminSession } from '@/lib/auth';
+import { useValueFlash } from '@/hooks/useValueFlash';
 
 const CHART_INTERVALS = [
   { value: '5m', label: '5Dk' }, { value: '15m', label: '15Dk' },
@@ -50,8 +42,10 @@ const CHART_PERIODS = [
   { value: '2y', label: '2Y' }, { value: '5y', label: '5Y' },
 ];
 
-// Default chart configuration mapped directly to the active RSI filter timeframe
-const DEFAULT_CONFIG_BY_TIMEFRAME: Record<string, { interval: string; period: string }> = {
+type ChartConfig = { interval: string; period: string };
+
+// Default chart configuration for each primary (RSI) filter timeframe
+const DEFAULT_CONFIG_BY_TIMEFRAME: Record<string, ChartConfig> = {
   '5m': { interval: '5m', period: '1mo' },
   '15m': { interval: '15m', period: '1mo' },
   '1h': { interval: '1h', period: '3mo' },
@@ -59,69 +53,22 @@ const DEFAULT_CONFIG_BY_TIMEFRAME: Record<string, { interval: string; period: st
   '1d': { interval: '1d', period: '6mo' },
 };
 
-const getDefaultChartConfig = (tf?: string) => {
-  return DEFAULT_CONFIG_BY_TIMEFRAME[tf?.toLowerCase() || '4h'] || { interval: '4h', period: '6mo' };
+const getDefaultChartConfig = (tf?: string): ChartConfig =>
+  DEFAULT_CONFIG_BY_TIMEFRAME[tf?.toLowerCase() || '4h'] || DEFAULT_CONFIG_BY_TIMEFRAME['4h'];
+
+const TIMEFRAME_LABELS: Record<string, { short: string; long: string; full: string }> = {
+  '5m': { short: '5Dk', long: '5 Dakikalık (5Dk)', full: '5 Dakika' },
+  '15m': { short: '15Dk', long: '15 Dakikalık (15Dk)', full: '15 Dakika' },
+  '1h': { short: '1S', long: '1 Saatlik (1S)', full: '1 Saat' },
+  '4h': { short: '4S', long: '4 Saatlik (4S)', full: '4 Saat' },
+  '1d': { short: '1G', long: 'Günlük (1G)', full: '1 Gün' },
 };
 
-const formatTfLabel = (tf?: string) => {
-  if (!tf) return '4S';
-  const map: Record<string, string> = {
-    '5m': '5Dk', '15m': '15Dk', '1h': '1S', '4h': '4S', '1d': '1G',
-  };
-  return map[tf.toLowerCase()] || tf.toUpperCase();
-};
+const tfLabel = (tf: string, kind: 'short' | 'long' | 'full') =>
+  TIMEFRAME_LABELS[tf.toLowerCase()]?.[kind] ?? tf.toUpperCase();
 
-const formatTfLongLabel = (tf?: string) => {
-  if (!tf) return '4 Saatlik (4S)';
-  const map: Record<string, string> = {
-    '5m': '5 Dakikalık (5Dk)', '15m': '15 Dakikalık (15Dk)',
-    '1h': '1 Saatlik (1S)', '4h': '4 Saatlik (4S)', '1d': 'Günlük (1G)',
-  };
-  return map[tf.toLowerCase()] || tf.toUpperCase();
-};
-
-const formatTfFullText = (tf?: string) => {
-  if (!tf) return '4 Saat';
-  const map: Record<string, string> = {
-    '5m': '5 Dakika', '15m': '15 Dakika', '1h': '1 Saat', '4h': '4 Saat', '1d': '1 Gün',
-  };
-  return map[tf.toLowerCase()] || tf;
-};
-
-// Helper function to render human-readable condition text and reference values
-function renderConditionText(rule: any) {
-  const curVal = rule.current_value ?? rule.left_value;
-  const targetVal = rule.target_value ?? rule.right_value;
-  const formattedCur = curVal !== undefined && curVal !== null ? Number(curVal).toFixed(2) : null;
-  const formattedTarget = targetVal !== undefined && targetVal !== null ? Number(targetVal).toFixed(2) : null;
-  const cond = rule.condition || '>';
-
-  // 1. If rule is an RSI range (e.g. RSI 0-30)
-  if (rule.name?.includes('(0-30)') || rule.name?.toLowerCase().includes('aşırı satım')) {
-    if (formattedCur !== null) {
-      return (
-        <span>
-          Anlık RSI: <strong className="text-slate-200">{formattedCur}</strong>{' '}
-          <span className="text-slate-500">| Hedef Aralık:</span>{' '}
-          <strong className="text-amber-400">[0 - 30]</strong>
-        </span>
-      );
-    }
-  }
-
-  // 2. Standard comparison rule (e.g. MA(9) > MA(14))
-  if (formattedCur !== null && formattedTarget !== null) {
-    return (
-      <span>
-        Anlık: <strong className="text-slate-200">{formattedCur}</strong>{' '}
-        <span className="text-slate-500">{cond}</span>{' '}
-        Referans: <strong className="text-slate-200">{formattedTarget}</strong>
-      </span>
-    );
-  }
-
-  return <span className="text-slate-500">Şart durumu izleniyor</span>;
-}
+// Session flags live in localStorage; reading them through useSyncExternalStore keeps SSR and hydration consistent
+const noopSubscribe = () => () => {};
 
 interface TopPricedRowProps {
   item: TickerItem;
@@ -132,17 +79,7 @@ interface TopPricedRowProps {
 }
 
 const TopPricedRow = ({ item, rank, name, isSelected, onSelect }: TopPricedRowProps) => {
-  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
-  const prevPrice = useRef(item.current_price);
-
-  useEffect(() => {
-    if (item.current_price !== prevPrice.current) {
-      setFlash(item.current_price > prevPrice.current ? 'up' : 'down');
-      prevPrice.current = item.current_price;
-      const timer = setTimeout(() => setFlash(null), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [item.current_price]);
+  const flash = useValueFlash(item.symbol, item.current_price, 3000);
 
   return (
     <div
@@ -174,24 +111,20 @@ const TopPricedRow = ({ item, rank, name, isSelected, onSelect }: TopPricedRowPr
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  
+  const isAuthenticated = useSyncExternalStore(noopSubscribe, () => !!getAccessToken(), () => false);
+  const isAdmin = useSyncExternalStore(noopSubscribe, isAdminSession, () => false);
+
   const [watchlist, setWatchlist] = useState<string[]>([]);
-  // Mutex state to prevent race conditions during rapid watchlist additions/removals
+  // Pending state drives the UI; the ref is the real mutex (state updates are async, so two quick clicks could both pass a state check)
   const [watchlistPending, setWatchlistPending] = useState<Record<string, boolean>>({});
+  const watchlistInFlightRef = useRef<Set<string>>(new Set());
 
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const selectedSymbolRef = useRef<string | null>(null);
 
   const chartSectionRef = useRef<HTMLDivElement>(null);
-  const chartCacheRef = useRef<Record<string, { candles: any[]; indicators?: any[]; rsi_pane?: any; marketData?: MarketData }>>({});
-
-  useEffect(() => {
-    selectedSymbolRef.current = selectedSymbol;
-  }, [selectedSymbol]);
-  
-  const [dynamicNames, setDynamicNames] = useState<Record<string, string>>(TICKER_NAMES);
+  // Last payload per symbol/interval/period so switching back renders instantly
+  const chartCacheRef = useRef<Record<string, MarketData>>({});
 
   const [isWatchlistOpen, setIsWatchlistOpen] = useState<boolean>(true);
   const [isFunnelOpen, setIsFunnelOpen] = useState<boolean>(true);
@@ -201,7 +134,7 @@ export default function DashboardPage() {
 
   const [isTopScoredExpanded, setIsTopScoredExpanded] = useState<boolean>(false);
   const [isTopPricedExpanded, setIsTopPricedExpanded] = useState<boolean>(false);
-  
+
   const [isRsiInfoOpen, setIsRsiInfoOpen] = useState<boolean>(false);
   const rsiInfoRef = useRef<HTMLDivElement>(null);
   const rsiButtonRef = useRef<HTMLButtonElement>(null);
@@ -209,32 +142,22 @@ export default function DashboardPage() {
   const [isRuleDrawerOpen, setIsRuleDrawerOpen] = useState<boolean>(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
 
-  const [primaryFilterTf, setPrimaryFilterTf] = useState<string>('4h');
-  const [chartConfig, setChartConfig] = useState<{ interval: string; period: string }>({
-    interval: '4h', period: '6mo',
-  });
+  const [chartConfig, setChartConfig] = useState<ChartConfig>(getDefaultChartConfig('4h'));
+  const chartConfigRef = useRef<ChartConfig>(chartConfig);
+  // The chart defaults follow the primary filter timeframe until the user picks something
+  const chartConfigTouchedRef = useRef(false);
 
   const [marketData, setMarketData] = useState<MarketData | null>(null);
-  const [chartData, setChartData] = useState<{
-    candles: any[];
-    indicators?: any[];
-    rsi_pane?: any;
-  } | null>(null);
   const [loadingMarket, setLoadingMarket] = useState<boolean>(false);
 
   const [overview, setOverview] = useState<MarketOverviewResponse | null>(null);
-  const [loadingOverview, setLoadingOverview] = useState<boolean>(true);
-  const [stockScores, setStockScores] = useState<Record<string, number>>({});
-  
   const [liveTickerData, setLiveTickerData] = useState<TickerItem[]>([]);
-
-  const lastRenderedScoreRef = useRef<{ symbol: string; score: number } | null>(null);
-  const [scoreFlash, setScoreFlash] = useState<'up' | 'down' | null>(null);
-
-  const lastRenderedPriceRef = useRef<{ symbol: string; price: number } | null>(null);
-  const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
-
   const [bistTime, setBistTime] = useState<string>('--:--:--');
+
+  useEffect(() => {
+    selectedSymbolRef.current = selectedSymbol;
+    chartConfigRef.current = chartConfig;
+  }, [selectedSymbol, chartConfig]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -252,9 +175,9 @@ export default function DashboardPage() {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        rsiInfoRef.current && 
+        rsiInfoRef.current &&
         !rsiInfoRef.current.contains(target) &&
-        rsiButtonRef.current && 
+        rsiButtonRef.current &&
         !rsiButtonRef.current.contains(target)
       ) {
         setIsRsiInfoOpen(false);
@@ -266,184 +189,62 @@ export default function DashboardPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isRsiInfoOpen]);
 
-  const handleSelectStockWithScroll = (symbol: string) => {
-    setPriceFlash(null);
-    setScoreFlash(null);
-    setSelectedSymbol(symbol);
+  const loadingOverview = overview === null;
+  const activePrimaryFilterTf = marketData?.primary_filter_timeframe || overview?.primary_filter_timeframe || '4h';
 
-    if (typeof window !== 'undefined' && window.innerWidth < 1024 && chartSectionRef.current) {
+  // Score and company name per symbol come from the overview scan
+  const { stockScores, stockNames } = useMemo(() => {
+    const scores: Record<string, number> = {};
+    const names: Record<string, string> = {};
+    overview?.items.forEach((item) => {
+      scores[item.symbol] = item.score;
+      names[item.symbol] = item.name;
+    });
+    return { stockScores: scores, stockNames: names };
+  }, [overview]);
+
+  const handleSelectStockWithScroll = (symbol: string) => {
+    setSelectedSymbol(symbol);
+    if (window.innerWidth < 1024 && chartSectionRef.current) {
       chartSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
 
+  const updateChartConfig = (next: ChartConfig | ((prev: ChartConfig) => ChartConfig)) => {
+    chartConfigTouchedRef.current = true;
+    setChartConfig(next);
+  };
+
   const handleSelectRsiStockWithScroll = (symbol: string) => {
-    const targetConfig = getDefaultChartConfig(primaryFilterTf);
-    setChartConfig(targetConfig);
+    updateChartConfig(getDefaultChartConfig(activePrimaryFilterTf));
     handleSelectStockWithScroll(symbol);
   };
 
-  const refreshPrimaryFilterTimeframe = useCallback(async (syncChartConfig = false) => {
+  const loadMarket = useCallback(async (symbol: string, config: ChartConfig, isBackground = false, signal?: AbortSignal) => {
+    const cacheKey = `${symbol}_${config.interval}_${config.period}`;
     try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`${API_URL}/rules`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const rules = await res.json();
-        const primary = rules.find((r: any) => r.is_primary_filter);
-        if (primary?.timeframe) {
-          const tf = primary.timeframe;
-          setPrimaryFilterTf(tf);
-          if (syncChartConfig) {
-            setChartConfig(getDefaultChartConfig(tf));
-          }
-        }
-      }
-    } catch {
-      // Fallback
-    }
-  }, []);
-
-  const refreshOverview = useCallback(async () => {
-    try {
-      const ov = await fetchMarketOverview();
-      setOverview(ov);
-      const scoresMap: Record<string, number> = {};
-      const namesMap: Record<string, string> = { ...TICKER_NAMES };
-      
-      ov.items.forEach((item) => {
-        scoresMap[item.symbol] = item.score;
-        namesMap[item.symbol] = item.name; 
-      });
-      
-      setStockScores(scoresMap);
-      setDynamicNames(namesMap);
+      const data = await fetchMarketData(symbol, config.interval, config.period, signal);
+      chartCacheRef.current[cacheKey] = data;
+      // A background refresh must not overwrite a newer selection or chart setting
+      const stillCurrent = selectedSymbolRef.current === symbol && chartConfigRef.current === config;
+      if (!isBackground || stillCurrent) setMarketData(data);
     } catch (err) {
-      console.warn('Overview refresh warning:', err);
-    }
-  }, []);
-
-  const loadMarket = useCallback(async (symbol: string, interval: string, period: string, isBackground = false, signal?: AbortSignal) => {
-    const cacheKey = `${symbol}_${interval}_${period}`;
-    const cachedData = chartCacheRef.current[cacheKey];
-
-    if (cachedData && !isBackground) {
-      setChartData({
-        candles: cachedData.candles,
-        indicators: cachedData.indicators || [],
-        rsi_pane: cachedData.rsi_pane,
-      });
-      if (cachedData.marketData) {
-        setMarketData(cachedData.marketData);
-        if ((cachedData.marketData as any).primary_filter_timeframe) {
-          setPrimaryFilterTf((cachedData.marketData as any).primary_filter_timeframe);
-        }
-      }
-      setLoadingMarket(false);
-    } else if (!isBackground) {
-      setLoadingMarket(true);
-    }
-
-    try {
-      const data = await fetchMarketData(symbol, interval, period, signal);
-      setMarketData(data);
-
-      if ((data as any).primary_filter_timeframe) {
-        setPrimaryFilterTf((data as any).primary_filter_timeframe);
-      }
-
-      const newChartPayload = {
-        candles: data.candles,
-        indicators: data.indicators || [],
-        rsi_pane: data.rsi_pane,
-        marketData: data,
-      };
-
-      chartCacheRef.current[cacheKey] = newChartPayload;
-
-      if (!isBackground || !cachedData) {
-        setChartData({
-          candles: data.candles,
-          indicators: data.indicators || [],
-          rsi_pane: data.rsi_pane,
-        });
-      }
-      
-      if (data.score !== undefined) {
-        setStockScores((prev) => ({ ...prev, [symbol]: data.score! }));
-      }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') console.warn('Market data fetch warning:', err?.message);
+      if (!(err instanceof Error && err.name === 'AbortError')) console.warn('Market data fetch warning:', err);
     } finally {
       if (!isBackground) setLoadingMarket(false);
     }
   }, []);
 
-  const initializeDashboard = useCallback(async () => {
-    fetchWatchlist()
-      .then((data) => {
-        const symbols = data.map((item: any) => item.symbol);
-        setWatchlist(symbols);
-      })
-      .catch((err) => console.warn('Watchlist init warning:', err));
-
-    fetch(`${API_URL}/market/ticker`, { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setLiveTickerData(data))
-      .catch((err) => console.warn('Ticker init warning:', err));
-
-    await refreshPrimaryFilterTimeframe(true);
-
-    try {
-      const ov = await fetchMarketOverview();
-      setOverview(ov);
-      const scoresMap: Record<string, number> = {};
-      const namesMap: Record<string, string> = { ...TICKER_NAMES };
-
-      ov.items.forEach((item) => {
-        scoresMap[item.symbol] = item.score;
-        namesMap[item.symbol] = item.name;
-      });
-
-      setStockScores(scoresMap);
-      setDynamicNames(namesMap);
-    } catch (err) {
-      console.warn('Overview init warning:', err);
-    } finally {
-      setLoadingOverview(false);
-    }
-  }, [refreshPrimaryFilterTimeframe]);
-
   useEffect(() => {
-    try {
-      const bc = new BroadcastChannel('bist_tracker_sync');
-      bc.onmessage = (event) => {
-        if (event.data === 'RULES_UPDATED') {
-          setTimeout(() => {
-            refreshPrimaryFilterTimeframe(true);
-            refreshOverview();
-            if (selectedSymbolRef.current) {
-              setChartConfig((prev) => ({ ...prev }));
-            }
-          }, 500);
-        }
-      };
-      return () => bc.close();
-    } catch (e) {
-      console.warn("BroadcastChannel unsupported");
-    }
-  }, [refreshOverview, refreshPrimaryFilterTimeframe]);
-
-  useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
+    // Read storage directly: during hydration `isAuthenticated` is still the server value (false)
+    if (!getAccessToken()) {
       router.push('/giris');
       return;
     }
-    setIsAuthenticated(true);
-    setIsAdmin(localStorage.getItem('is_admin') === 'true');
-    initializeDashboard();
-  }, [router, initializeDashboard]);
+    fetchWatchlist()
+      .then((data) => setWatchlist(data.map((item) => item.symbol)))
+      .catch((err) => console.warn('Watchlist init warning:', err));
+  }, [router]);
 
   useEffect(() => {
     const timer = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 60);
@@ -451,35 +252,13 @@ export default function DashboardPage() {
   }, [isWatchlistOpen, isFunnelOpen]);
 
   useEffect(() => {
+    // Market data is delayed by 15 minutes; outside the session the clock shows the close time
     const updateClock = () => {
-      const now = new Date();
-      const utcMs = now.getTime();
-      const istOffsetMs = 3 * 60 * 60 * 1000;
-      const delayMs = 15 * 60 * 1000;
-      
-      const delayedIst = new Date(utcMs + istOffsetMs - delayMs);
-      
-      const hours = delayedIst.getUTCHours();
-      const minutes = delayedIst.getUTCMinutes();
-      const seconds = delayedIst.getUTCSeconds();
-      const day = delayedIst.getUTCDay(); 
-      
-      let displayHours = hours;
-      let displayMinutes = minutes;
-      let displaySeconds = seconds;
-
-      const timeInSeconds = hours * 3600 + minutes * 60 + seconds;
-      const openTime = 10 * 3600; 
-      const closeTime = 18 * 3600 + 10 * 60; 
-
-      if (day === 0 || day === 6 || timeInSeconds < openTime || timeInSeconds >= closeTime) {
-        displayHours = 18; displayMinutes = 10; displaySeconds = 0;
-      }
-      
-      const hh = String(displayHours).padStart(2, '0');
-      const mm = String(displayMinutes).padStart(2, '0');
-      const ss = String(displaySeconds).padStart(2, '0');
-      setBistTime(`${hh}:${mm}:${ss}`);
+      const delayedIst = new Date(Date.now() + 3 * 3600 * 1000 - 15 * 60 * 1000);
+      const day = delayedIst.getUTCDay();
+      const seconds = delayedIst.getUTCHours() * 3600 + delayedIst.getUTCMinutes() * 60 + delayedIst.getUTCSeconds();
+      const isOpen = day !== 0 && day !== 6 && seconds >= 10 * 3600 && seconds < 18 * 3600 + 10 * 60;
+      setBistTime(isOpen ? delayedIst.toISOString().substring(11, 19) : '18:10:00');
     };
 
     updateClock();
@@ -487,39 +266,51 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, []);
 
+  // Selected symbol or chart settings changed: show cached data instantly, then fetch fresh
   useEffect(() => {
     if (!selectedSymbol || !isAuthenticated) return;
     const controller = new AbortController();
-    loadMarket(selectedSymbol, chartConfig.interval, chartConfig.period, false, controller.signal);
+    const cached = chartCacheRef.current[`${selectedSymbol}_${chartConfig.interval}_${chartConfig.period}`];
+    const run = async () => {
+      if (cached) {
+        setMarketData(cached);
+        setLoadingMarket(false);
+      } else {
+        setLoadingMarket(true);
+      }
+      await loadMarket(selectedSymbol, chartConfig, false, controller.signal);
+    };
+    run();
     return () => controller.abort();
   }, [selectedSymbol, chartConfig, isAuthenticated, loadMarket]);
 
+  // Single heartbeat: ticker band, universe overview and the open chart refresh together every 15s
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const runHeartbeat = async () => {
       const currentSym = selectedSymbolRef.current;
       await Promise.allSettled([
-        fetch(`${API_URL}/market/ticker`, { cache: 'no-store' })
-          .then((res) => (res.ok ? res.json() : []))
-          .then((data) => setLiveTickerData(data)),
-
-        refreshOverview(),
-
-        currentSym ? loadMarket(currentSym, chartConfig.interval, chartConfig.period, true) : Promise.resolve(),
+        fetchTicker().then(setLiveTickerData),
+        fetchMarketOverview().then((ov) => {
+          setOverview(ov);
+          if (!chartConfigTouchedRef.current && ov.primary_filter_timeframe) {
+            setChartConfig(getDefaultChartConfig(ov.primary_filter_timeframe));
+          }
+        }),
+        currentSym ? loadMarket(currentSym, chartConfigRef.current, true) : Promise.resolve(),
       ]);
-      setLoadingOverview(false);
     };
 
     runHeartbeat();
     const heartbeatTimer = setInterval(runHeartbeat, 15000);
     return () => clearInterval(heartbeatTimer);
-  }, [isAuthenticated, chartConfig, loadMarket, refreshOverview]);
+  }, [isAuthenticated, loadMarket]);
 
   const handleToggleWatchlist = async (symbol: string, isAdded: boolean) => {
-    // Prevent duplicate triggers if action is already in-flight for this symbol
-    if (watchlistPending[symbol]) return;
-
+    // Prevent duplicate triggers if an action is already in flight for this symbol
+    if (watchlistInFlightRef.current.has(symbol)) return;
+    watchlistInFlightRef.current.add(symbol);
     setWatchlistPending((prev) => ({ ...prev, [symbol]: true }));
 
     try {
@@ -528,13 +319,14 @@ export default function DashboardPage() {
         setWatchlist((prev) => prev.filter((s) => s !== symbol));
       } else {
         await addToWatchlist(symbol);
-        setWatchlist((prev) => [...prev, symbol]);
+        setWatchlist((prev) => (prev.includes(symbol) ? prev : [...prev, symbol]));
         handleSelectStockWithScroll(symbol);
         setIsMobileSearchOpen(false);
       }
-    } catch (err: any) { 
-      alert(err.message); 
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'İşlem başarısız oldu');
     } finally {
+      watchlistInFlightRef.current.delete(symbol);
       setWatchlistPending((prev) => {
         const next = { ...prev };
         delete next[symbol];
@@ -544,9 +336,7 @@ export default function DashboardPage() {
   };
 
   const handleIntervalChange = (newInterval: string) => {
-    setPriceFlash(null);
-    setScoreFlash(null);
-    setChartConfig((prev) => {
+    updateChartConfig((prev) => {
       let nextPeriod = prev.period;
       if (newInterval === '5m' || newInterval === '15m') nextPeriod = '1mo';
       else if ((newInterval === '1h' || newInterval === '4h') && prev.period === '5y') nextPeriod = '1y';
@@ -555,9 +345,7 @@ export default function DashboardPage() {
   };
 
   const handlePeriodChange = (newPeriod: string) => {
-    setPriceFlash(null);
-    setScoreFlash(null);
-    setChartConfig((prev) => {
+    updateChartConfig((prev) => {
       let nextInterval = prev.interval;
       if (newPeriod === '5y' && prev.interval !== '1d') nextInterval = '1d';
       else if (newPeriod !== '1mo' && (prev.interval === '5m' || prev.interval === '15m')) nextInterval = '4h';
@@ -565,58 +353,14 @@ export default function DashboardPage() {
     });
   };
 
-  const currentScore = (marketData && marketData.symbol === selectedSymbol && marketData.score !== undefined)
-    ? marketData.score
-    : (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
-
-  useEffect(() => {
-    if (!selectedSymbol) {
-      setScoreFlash(null);
-      return;
-    }
-
-    if (!lastRenderedScoreRef.current || lastRenderedScoreRef.current.symbol !== selectedSymbol) {
-      lastRenderedScoreRef.current = { symbol: selectedSymbol, score: currentScore };
-      setScoreFlash(null);
-      return;
-    }
-
-    if (lastRenderedScoreRef.current.symbol === selectedSymbol && lastRenderedScoreRef.current.score !== currentScore) {
-      const direction = currentScore > lastRenderedScoreRef.current.score ? 'up' : 'down';
-      setScoreFlash(direction);
-      lastRenderedScoreRef.current = { symbol: selectedSymbol, score: currentScore };
-      const timer = setTimeout(() => setScoreFlash(null), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [selectedSymbol, currentScore]);
-
-  useEffect(() => {
-    if (!marketData || marketData.symbol !== selectedSymbol || marketData.current_price === undefined) {
-      setPriceFlash(null);
-      return;
-    }
-
-    const sym = marketData.symbol;
-    const price = marketData.current_price;
-
-    if (!lastRenderedPriceRef.current || lastRenderedPriceRef.current.symbol !== sym) {
-      lastRenderedPriceRef.current = { symbol: sym, price };
-      setPriceFlash(null);
-      return;
-    }
-
-    if (lastRenderedPriceRef.current.symbol === sym && lastRenderedPriceRef.current.price !== price) {
-      const direction = price > lastRenderedPriceRef.current.price ? 'up' : 'down';
-      setPriceFlash(direction);
-      lastRenderedPriceRef.current = { symbol: sym, price };
-      const timer = setTimeout(() => setPriceFlash(null), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [selectedSymbol, marketData?.symbol, marketData?.current_price]);
+  const selectedData = marketData && marketData.symbol === selectedSymbol ? marketData : null;
+  const currentScore = selectedData?.score ?? (selectedSymbol ? stockScores[selectedSymbol] ?? 0 : 0);
+  const scoreFlash = useValueFlash(selectedSymbol, selectedSymbol ? currentScore : undefined);
+  const priceFlash = useValueFlash(selectedSymbol, selectedData?.current_price);
 
   if (!isAuthenticated) return <div className="min-h-screen bg-[#0b0e14]" />;
 
-  const rulesList = (marketData && marketData.symbol === selectedSymbol) ? (marketData.rules_breakdown || []) : [];
+  const rulesList = selectedData?.rules_breakdown || [];
   const rsiPassedList: StockOverviewItem[] = overview?.rsi_passed || [];
   const topScoredList: StockOverviewItem[] = overview?.top_scored || [];
   
@@ -624,7 +368,6 @@ export default function DashboardPage() {
     .sort((a, b) => b.current_price - a.current_price)
     .slice(0, 10);
 
-  const activePrimaryFilterTf = (marketData as any)?.primary_filter_timeframe || primaryFilterTf || '4h';
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0e14] text-slate-200 overflow-x-clip">
@@ -633,14 +376,7 @@ export default function DashboardPage() {
         {isMobileSearchOpen ? (
           <div className="flex items-center w-full gap-3 animate-in fade-in duration-200">
              <div className="flex-1 w-full">
-               <StockSearch 
-                 userWatchlist={watchlist} 
-                 onToggleWatchlist={handleToggleWatchlist} 
-                 onSelectStock={(sym) => {
-                   handleSelectStockWithScroll(sym);
-                   setIsMobileSearchOpen(false);
-                 }}
-               />
+               <StockSearch userWatchlist={watchlist} onToggleWatchlist={handleToggleWatchlist} />
              </div>
              <button 
                onClick={() => setIsMobileSearchOpen(false)} 
@@ -659,11 +395,7 @@ export default function DashboardPage() {
                 <span className="hidden sm:inline font-semibold text-slate-100 tracking-tight">BIST Tracker</span>
               </div>
               <div className="hidden sm:block w-64">
-                 <StockSearch 
-                   userWatchlist={watchlist} 
-                   onToggleWatchlist={handleToggleWatchlist} 
-                   onSelectStock={handleSelectStockWithScroll}
-                 />
+                 <StockSearch userWatchlist={watchlist} onToggleWatchlist={handleToggleWatchlist} />
               </div>
             </div>
 
@@ -697,8 +429,7 @@ export default function DashboardPage() {
                       type="button"
                       onClick={() => {
                         setIsProfileMenuOpen(false);
-                        const slug = localStorage.getItem('user_slug') || 'demo';
-                        router.push(`/kullanici/${slug}`);
+                        router.push(`/kullanici/${getUserSlug()}`);
                       }}
                       className="w-full flex items-center py-2 px-2.5 rounded-md hover:bg-slate-800/80 text-xs text-left cursor-pointer transition-colors"
                     >
@@ -711,7 +442,7 @@ export default function DashboardPage() {
                         type="button"
                         onClick={() => {
                           setIsProfileMenuOpen(false);
-                          window.location.href = '/admin';
+                          router.push('/admin');
                         }}
                         className="w-full flex items-center py-2 px-2.5 rounded-md hover:bg-slate-800/80 text-xs text-left text-emerald-400 cursor-pointer transition-colors"
                       >
@@ -724,9 +455,7 @@ export default function DashboardPage() {
                       type="button"
                       onClick={() => {
                         setIsProfileMenuOpen(false);
-                        localStorage.removeItem('access_token');
-                        localStorage.removeItem('refresh_token');
-                        localStorage.removeItem('is_admin');
+                        clearSession();
                         router.push('/giris');
                       }}
                       className="w-full flex items-center py-2 px-2.5 rounded-md bg-rose-950/30 text-rose-400 border border-rose-500/10 hover:!bg-rose-900/45 text-xs text-left cursor-pointer transition-colors mt-1"
@@ -794,7 +523,7 @@ export default function DashboardPage() {
                               </span>
                               <div className="flex flex-col min-w-0">
                                 <span className="text-xs font-mono font-bold text-slate-100">{symbol}</span>
-                                <span className="text-[10px] text-slate-500 truncate max-w-[110px]">{dynamicNames[symbol] || symbol}</span>
+                                <span className="text-[10px] text-slate-500 truncate max-w-[110px]">{stockNames[symbol] || symbol}</span>
                               </div>
                             </div>
 
@@ -899,12 +628,12 @@ export default function DashboardPage() {
                     <div className="overflow-hidden">
                       <div className="p-3.5 bg-[#161b26] border-t border-amber-500/20 text-xs space-y-2 select-none">
                         <p className="text-[11px] text-slate-300 leading-relaxed">
-                          Bu liste, BIST evrenindeki hisseleri <strong className="text-white">{formatTfLongLabel(activePrimaryFilterTf)}</strong> periyotta analiz eder. <strong className="text-purple-400">RSI (14)</strong> indikatörünün <strong className="text-blue-400">düşen trend direncini</strong> yukarı kırdığı hisseleri tespit eder.
+                          Bu liste, BIST evrenindeki hisseleri <strong className="text-white">{tfLabel(activePrimaryFilterTf, 'long')}</strong> periyotta analiz eder. <strong className="text-purple-400">RSI (14)</strong> indikatörünün <strong className="text-blue-400">düşen trend direncini</strong> yukarı kırdığı hisseleri tespit eder.
                         </p>
                         <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
                           <span>Hesaplama Periyodu:</span>
                           <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
-                            {formatTfLabel(activePrimaryFilterTf)} / {formatTfFullText(activePrimaryFilterTf)}
+                            {tfLabel(activePrimaryFilterTf, 'short')} / {tfLabel(activePrimaryFilterTf, 'full')}
                           </span>
                         </div>
                       </div>
@@ -968,7 +697,7 @@ export default function DashboardPage() {
 
                           {/* Rule Alert Dropdown on Chart Header */}
                           <div className="mt-1">
-                            <StockAlertDropdown symbol={selectedSymbol} />
+                            <StockAlertDropdown key={selectedSymbol} symbol={selectedSymbol} />
                           </div>
                         </div>
 
@@ -977,18 +706,18 @@ export default function DashboardPage() {
                             {chartConfig.interval} / {chartConfig.period}
                            </span>
                            <span className="text-[10px] font-mono text-slate-500 border border-slate-700 bg-slate-800/50 px-2 py-1 rounded">
-                             {dynamicNames[selectedSymbol!] || selectedSymbol}
+                             {stockNames[selectedSymbol!] || selectedSymbol}
                            </span>
 
-                           {marketData && marketData.symbol === selectedSymbol && marketData.has_primary_filter && (
+                           {selectedData?.has_primary_filter && (
                              <span className={`px-2 py-1 rounded border text-[10px] font-mono font-semibold flex items-center space-x-1.5 ${
-                               marketData.primary_filter_passed 
+                               selectedData.primary_filter_passed 
                                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
                                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
                              }`}>
                                <Filter className="h-3 w-3" />
-                               <span>{marketData.primary_filter_passed ? 'FİLTRE OK' : 'FİLTRE BEKLENİYOR'}</span>
-                               <span className="opacity-80">({formatTfLabel(activePrimaryFilterTf)})</span>
+                               <span>{selectedData.primary_filter_passed ? 'FİLTRE OK' : 'FİLTRE BEKLENİYOR'}</span>
+                               <span className="opacity-80">({tfLabel(activePrimaryFilterTf, 'short')})</span>
                              </span>
                            )}
                         </div>
@@ -1016,17 +745,17 @@ export default function DashboardPage() {
 
                     {/* Chart Header Metrics Container */}
                     <div className="flex flex-col justify-center bg-[#161b26]/50 border border-slate-800/80 rounded-2xl p-4 sm:p-5 w-full md:w-auto xl:min-w-[340px] md:self-start">
-                      {marketData && marketData.symbol === selectedSymbol && !loadingMarket ? (
+                      {selectedData && !loadingMarket ? (
                         <div className="flex flex-col space-y-4">
                           
                           <div className={`flex items-start justify-between p-2 -mx-2 rounded-lg transition-colors duration-500 ${priceFlash === 'up' ? 'bg-emerald-500/20' : priceFlash === 'down' ? 'bg-rose-500/20' : 'bg-transparent'}`}>
                             <div className={`font-mono text-3xl sm:text-4xl font-bold leading-none transition-colors duration-300 ${priceFlash === 'up' ? 'text-emerald-400' : priceFlash === 'down' ? 'text-rose-400' : 'text-slate-100'}`}>
-                              ₺{marketData.current_price.toFixed(2)}
+                              ₺{selectedData.current_price.toFixed(2)}
                             </div>
                             <div className="flex flex-col items-end">
-                              <div className={`flex items-center space-x-1 font-mono text-sm font-semibold ${marketData.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {marketData.change_pct >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                                <span>{marketData.change_pct >= 0 ? '+' : ''}{marketData.change_pct}%</span>
+                              <div className={`flex items-center space-x-1 font-mono text-sm font-semibold ${selectedData.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {selectedData.change_pct >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                                <span>{selectedData.change_pct >= 0 ? '+' : ''}{selectedData.change_pct}%</span>
                               </div>
                               <span className="text-[10px] text-slate-500 mt-1 uppercase font-mono">
                                 {bistTime}
@@ -1070,12 +799,12 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="w-full relative flex-1 min-h-[350px]">
-                    {chartData?.candles && !loadingMarket ? (
+                    {selectedData && !loadingMarket ? (
                       <ChartWrapper 
                         key={`${selectedSymbol}-${chartConfig.interval}-${chartConfig.period}`}
-                        candles={chartData.candles} 
-                        indicators={chartData.indicators} 
-                        rsiPane={chartData.rsi_pane} 
+                        candles={selectedData.candles}
+                        indicators={selectedData.indicators}
+                        rsiPane={selectedData.rsi_pane}
                         height={420} 
                       />
                     ) : (
@@ -1177,7 +906,7 @@ export default function DashboardPage() {
                         key={item.symbol}
                         item={item}
                         rank={idx}
-                        name={dynamicNames[item.symbol] || item.symbol}
+                        name={stockNames[item.symbol] || item.symbol}
                         isSelected={selectedSymbol === item.symbol}
                         onSelect={() => handleSelectStockWithScroll(item.symbol)}
                       />
@@ -1260,7 +989,7 @@ export default function DashboardPage() {
                         <span className="font-semibold truncate">{rule.name}</span>
                         <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
                           <span className="bg-slate-800/80 px-1.5 py-0.5 rounded">{rule.timeframe?.toUpperCase()}</span>
-                          {renderConditionText(rule)}
+                          <RuleConditionText rule={rule} />
                         </div>
                       </div>
                     </div>

@@ -1,17 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Bell, Check, Loader2, X, SlidersHorizontal } from 'lucide-react';
-import { API_URL, fetchRules } from '@/services/api';
+import { createAlert, CustomAlert, deleteAlert, fetchAlerts, fetchRules } from '@/services/api';
+import { getAccessToken } from '@/lib/auth';
 import { Rule } from '@/types';
-
-interface CustomAlertItem {
-  id: number;
-  symbol: string;
-  rule_id: number | null;
-  timeframe: string;
-  is_active: boolean;
-}
 
 interface StockAlertDropdownProps {
   symbol: string;
@@ -21,11 +14,11 @@ interface StockAlertDropdownProps {
 export default function StockAlertDropdown({ symbol, buttonClassName }: StockAlertDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [rules, setRules] = useState<Rule[]>([]);
-  const [userAlerts, setUserAlerts] = useState<CustomAlertItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [userAlerts, setUserAlerts] = useState<CustomAlert[]>([]);
+  // True until the first rules/alerts response for this symbol (only shown inside the open dropdown)
+  const [loading, setLoading] = useState(true);
   const [togglingRuleId, setTogglingRuleId] = useState<number | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const rulesLoadedRef = useRef(false);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -40,96 +33,42 @@ export default function StockAlertDropdown({ symbol, buttonClassName }: StockAle
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  // Load rules once, and fetch alerts specifically for the current symbol
-  const loadAlertData = useCallback(async (targetSymbol: string) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-    if (!token || !targetSymbol) return;
-
-    setLoading(true);
-    try {
-      const promises: [Promise<any>, Promise<Response>] = [
-        rulesLoadedRef.current ? Promise.resolve(null) : fetchRules().catch(() => []),
-        fetch(`${API_URL}/alerts`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-      ];
-
-      const [rulesData, alertsRes] = await Promise.all(promises);
-
-      if (rulesData) {
-        setRules(rulesData.filter((r: Rule) => r.is_active && !r.is_primary_filter));
-        rulesLoadedRef.current = true;
-      }
-
-      if (alertsRes.ok) {
-        const alertsData: CustomAlertItem[] = await alertsRes.json();
-        setUserAlerts(alertsData.filter((a) => a.symbol === targetSymbol.toUpperCase()));
-      }
-    } catch (err) {
-      console.error('Alert data fetch error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Fetch alert status immediately whenever symbol changes (regardless of isOpen)
+  // Load available rules and this symbol's alerts (the component is keyed by symbol, so this runs per symbol)
   useEffect(() => {
-    setUserAlerts([]);
-    setIsOpen(false);
-    if (symbol) {
-      loadAlertData(symbol);
-    }
-  }, [symbol, loadAlertData]);
+    if (!getAccessToken() || !symbol) return;
+    Promise.all([
+      fetchRules().catch(() => [] as Rule[]),
+      fetchAlerts().catch(() => [] as CustomAlert[]),
+    ])
+      .then(([rulesData, alertsData]) => {
+        setRules(rulesData.filter((r) => r.is_active && !r.is_primary_filter));
+        setUserAlerts(alertsData.filter((a) => a.symbol === symbol.toUpperCase()));
+      })
+      .finally(() => setLoading(false));
+  }, [symbol]);
 
   // Toggle alert registration for a specific rule
   const handleToggleRuleAlert = async (rule: Rule) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-    if (!token || !symbol) return;
+    if (!getAccessToken() || !symbol) return;
 
     setTogglingRuleId(rule.id);
     const existingAlert = userAlerts.find((a) => a.rule_id === rule.id);
 
     try {
       if (existingAlert) {
-        const res = await fetch(`${API_URL}/alerts/${existingAlert.id}`, {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (res.ok) {
-          setUserAlerts((prev) => prev.filter((a) => a.id !== existingAlert.id));
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          alert(errData.detail || 'Alarm silinirken bir hata oluştu.');
-        }
+        await deleteAlert(existingAlert.id);
+        setUserAlerts((prev) => prev.filter((a) => a.id !== existingAlert.id));
       } else {
-        const res = await fetch(`${API_URL}/alerts`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            symbol: symbol.toUpperCase(),
-            rule_id: rule.id,
-            timeframe: rule.timeframe || '15m',
-          }),
+        const newAlert = await createAlert({
+          symbol: symbol.toUpperCase(),
+          rule_id: rule.id,
+          timeframe: rule.timeframe || '15m',
         });
-
-        if (res.ok) {
-          const newAlert: CustomAlertItem = await res.json();
-          setUserAlerts((prev) => [...prev, newAlert]);
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          alert(errData.detail || 'Alarm eklenirken bir hata oluştu.');
-        }
+        setUserAlerts((prev) => [...prev, newAlert]);
       }
     } catch (err) {
-      console.error('Toggle alert network error:', err);
-      alert('Sunucuyla bağlantı kurulamadı.');
+      console.error('Toggle alert error:', err);
+      alert(err instanceof Error ? err.message : 'Sunucuyla bağlantı kurulamadı.');
     } finally {
       setTogglingRuleId(null);
     }

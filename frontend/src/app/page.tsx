@@ -42,7 +42,7 @@ export default function LandingPage() {
           </h1>
           
           <p className="text-lg text-slate-400 leading-relaxed max-w-2xl mx-auto">
-            Borsa İstanbul'daki fırsatları LLM halüsinasyonları olmadan, %100 matematiksel kurallara dayalı algoritmik skorlama motoruyla yakalayın.
+            Borsa İstanbul&apos;daki fırsatları LLM halüsinasyonları olmadan, %100 matematiksel kurallara dayalı algoritmik skorlama motoruyla yakalayın.
           </p>
 
           <div className="flex items-center justify-center space-x-4 pt-4">

@@ -12,10 +12,9 @@ interface Stock {
 interface StockSearchProps {
   userWatchlist: string[];
   onToggleWatchlist: (symbol: string, isAdded: boolean) => Promise<void> | void;
-  onSelectStock?: (symbol: string) => void;
 }
 
-export default function StockSearch({ userWatchlist, onToggleWatchlist, onSelectStock }: StockSearchProps) {
+export default function StockSearch({ userWatchlist, onToggleWatchlist }: StockSearchProps) {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [availableStocks, setAvailableStocks] = useState<Stock[]>([]);

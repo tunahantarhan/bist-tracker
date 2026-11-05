@@ -1,48 +1,64 @@
 'use client';
 
 import { useEffect, useRef, useState, ReactNode } from 'react';
-import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
-import { IndicatorOverlay, RsiPaneData } from '@/services/api';
+import {
+  createChart, ColorType, CandlestickSeries, LineSeries,
+  IChartApi, ISeriesApi, LogicalRange, UTCTimestamp,
+} from 'lightweight-charts';
+import { Candle, IndicatorOverlay, RsiPaneData } from '@/services/api';
 import { Eye, EyeOff } from 'lucide-react';
 
-interface CandleData {
-  time: string | number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
-
 interface ChartWrapperProps {
-  candles: CandleData[];
+  candles: Candle[];
   indicators?: IndicatorOverlay[];
   rsiPane?: RsiPaneData;
   height?: number;
   headerAction?: ReactNode; // Optional slot for alert dropdowns or extra controls
 }
 
-// Turkey Standard Time offset (UTC+3 = 3 hours = 10,800 seconds)
+interface ChartRefs {
+  mainChart: IChartApi;
+  candleSeries: ISeriesApi<'Candlestick'>;
+  indicatorSeries: Record<string, ISeriesApi<'Line'>>;
+  rsiChart: IChartApi | null;
+  rsiSeries: ISeriesApi<'Line'> | null;
+  trendSeries: ISeriesApi<'Line'> | null;
+}
+
+// Turkey Standard Time offset (UTC+3)
 const TRT_OFFSET_SECONDS = 3 * 3600;
+// The first N overlays are visible by default
+const DEFAULT_VISIBLE_OVERLAYS = 2;
 
-// Converts raw time strings/numbers into Unix seconds shifted by TRT offset for intraday frames
-function formatChartTime(time: string | number): number {
-  let timestampSeconds = 0;
+const CHART_THEME = {
+  layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
+  crosshair: { vertLine: { color: '#64748b', width: 1 as const, style: 3 }, horzLine: { color: '#64748b', width: 1 as const, style: 3 } },
+  timeScale: { borderColor: 'rgba(30, 41, 59, 0.8)', timeVisible: true, secondsVisible: false },
+  rightPriceScale: { borderColor: 'rgba(30, 41, 59, 0.8)' },
+};
 
+// Converts raw time strings/numbers into Unix seconds; intraday candles are shifted to TRT
+function formatChartTime(time: string | number): UTCTimestamp {
+  let seconds: number;
   if (typeof time === 'number') {
-    timestampSeconds = time > 1e11 ? Math.floor(time / 1000) : Math.floor(time);
-  } else if (typeof time === 'string') {
+    seconds = time > 1e11 ? Math.floor(time / 1000) : Math.floor(time);
+  } else {
     const parsed = Date.parse(time);
-    if (!isNaN(parsed)) {
-      timestampSeconds = Math.floor(parsed / 1000);
-    } else {
-      timestampSeconds = Math.floor(new Date(time).getTime() / 1000) || 0;
-    }
+    seconds = Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
   }
+  // Daily candles ("2026-10-21") stay on their date; only intraday ones (with a clock part) are shifted
+  const isIntraday = typeof time === 'number' || time.includes(':');
+  return (isIntraday ? seconds + TRT_OFFSET_SECONDS : seconds) as UTCTimestamp;
+}
 
-  // Apply +3h shift only for intraday candles (with colons) so daily candles stay on proper dates
-  const isIntraday = typeof time === 'number' || (typeof time === 'string' && time.includes(':'));
-
-  return isIntraday ? timestampSeconds + TRT_OFFSET_SECONDS : timestampSeconds;
+// Maps points to chart time, drops duplicate timestamps and sorts ascending (required by lightweight-charts)
+function toSeriesData<T extends { time: string | number }>(points: T[]): (Omit<T, 'time'> & { time: UTCTimestamp })[] {
+  const byTime = new Map<number, Omit<T, 'time'> & { time: UTCTimestamp }>();
+  points.forEach((p) => {
+    const time = formatChartTime(p.time);
+    byTime.set(time, { ...p, time });
+  });
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 }
 
 export default function ChartWrapper({
@@ -54,205 +70,141 @@ export default function ChartWrapper({
 }: ChartWrapperProps) {
   const mainChartContainerRef = useRef<HTMLDivElement>(null);
   const rsiChartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRefs = useRef<ChartRefs | null>(null);
 
-  // References to chart instances and series, to avoid re-creating them on every render
-  const chartRefs = useRef<{
-    mainChart: any;
-    candleSeries: any;
-    indicatorSeries: Record<string, any>;
-    rsiChart: any;
-    rsiSeries: any;
-    trendSeries: any;
-  } | null>(null);
+  // Only explicit user choices are stored; everything else falls back to the default visibility
+  const [visibilityOverrides, setVisibilityOverrides] = useState<Record<string, boolean>>({});
+  const isVisible = (name: string, idx: number) => visibilityOverrides[name] ?? idx < DEFAULT_VISIBLE_OVERLAYS;
+  const visibleKey = indicators.map((ind, idx) => (isVisible(ind.name, idx) ? '1' : '0')).join('');
 
-  const [visibleNames, setVisibleNames] = useState<Record<string, boolean>>({});
-  const [showAllOverlays, setShowAllOverlays] = useState<boolean>(false);
-
-  // Set the indicator views on the start
-  useEffect(() => {
-    if (!indicators || indicators.length === 0) return;
-    setVisibleNames((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      indicators.forEach((ind, idx) => {
-        if (next[ind.name] === undefined) {
-          next[ind.name] = idx < 2;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [indicators]);
-
-  const toggleSingleIndicator = (name: string) => {
-    setVisibleNames((prev) => ({ ...prev, [name]: !prev[name] }));
+  const toggleSingleIndicator = (name: string, idx: number) => {
+    setVisibilityOverrides((prev) => ({ ...prev, [name]: !isVisible(name, idx) }));
   };
+
+  const activeCount = indicators.filter((ind, idx) => isVisible(ind.name, idx)).length;
 
   const handleToggleAll = () => {
-    const nextState = !showAllOverlays;
-    setShowAllOverlays(nextState);
-    const updated: Record<string, boolean> = {};
-    indicators.forEach((ind) => {
-      updated[ind.name] = nextState;
-    });
-    setVisibleNames(updated);
+    const nextState = activeCount === 0;
+    setVisibilityOverrides(Object.fromEntries(indicators.map((ind) => [ind.name, nextState])));
   };
 
-  // Graphical construction and data updates handled in a single useEffect
+  // Chart construction (once) and data updates (on every change) without resetting pan/zoom
   useEffect(() => {
     if (!mainChartContainerRef.current) return;
-
     const initialWidth = mainChartContainerRef.current.clientWidth || 600;
 
-    // 1st stage: If chart does not exist, create it once
     if (!chartRefs.current) {
       const mainChart = createChart(mainChartContainerRef.current, {
+        ...CHART_THEME,
         width: initialWidth,
         height,
-        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
         grid: { vertLines: { color: 'rgba(30, 41, 59, 0.4)' }, horzLines: { color: 'rgba(30, 41, 59, 0.4)' } },
-        crosshair: { vertLine: { color: '#64748b', width: 1, style: 3 }, horzLine: { color: '#64748b', width: 1, style: 3 } },
-        timeScale: { borderColor: 'rgba(30, 41, 59, 0.8)', timeVisible: true, secondsVisible: false },
-        rightPriceScale: { borderColor: 'rgba(30, 41, 59, 0.8)' },
       });
-
       const candleSeries = mainChart.addSeries(CandlestickSeries, {
         upColor: '#10b981', downColor: '#ef4444', borderVisible: false, wickUpColor: '#10b981', wickDownColor: '#ef4444',
       });
 
-      let rsiChart: any = null;
-      let rsiSeries: any = null;
-      let trendSeries: any = null;
+      let rsiChart: IChartApi | null = null;
+      let rsiSeries: ISeriesApi<'Line'> | null = null;
+      let trendSeries: ISeriesApi<'Line'> | null = null;
 
       if (rsiChartContainerRef.current && rsiPane) {
-        rsiChart = createChart(rsiChartContainerRef.current, {
+        const rsi = createChart(rsiChartContainerRef.current, {
+          ...CHART_THEME,
           width: rsiChartContainerRef.current.clientWidth || initialWidth,
           height: 165,
-          layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
           grid: { vertLines: { color: 'rgba(30, 41, 59, 0.35)' }, horzLines: { color: 'rgba(30, 41, 59, 0.35)' } },
-          crosshair: { vertLine: { color: '#64748b', width: 1, style: 3 }, horzLine: { color: '#64748b', width: 1, style: 3 } },
-          timeScale: { borderColor: 'rgba(30, 41, 59, 0.8)', timeVisible: true, secondsVisible: false },
-          rightPriceScale: { borderColor: 'rgba(30, 41, 59, 0.8)' },
+        });
+        const rsiLine = rsi.addSeries(LineSeries, { color: '#a855f7', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+        [
+          { price: 70, color: 'rgba(148, 163, 184, 0.45)' },
+          { price: 50, color: 'rgba(148, 163, 184, 0.30)' },
+          { price: 30, color: 'rgba(148, 163, 184, 0.45)' },
+        ].forEach((lvl) => {
+          rsiLine.createPriceLine({ price: lvl.price, color: lvl.color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
+        });
+        trendSeries = rsi.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+
+        // Keep both panes scrolled/zoomed together
+        mainChart.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
+          if (range) rsi.timeScale().setVisibleLogicalRange(range);
+        });
+        rsi.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
+          if (range) mainChart.timeScale().setVisibleLogicalRange(range);
         });
 
-        rsiSeries = rsiChart.addSeries(LineSeries, { color: '#a855f7', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
-        
-        [ { price: 70, color: 'rgba(148, 163, 184, 0.45)' }, { price: 50, color: 'rgba(148, 163, 184, 0.30)' }, { price: 30, color: 'rgba(148, 163, 184, 0.45)' } ].forEach((lvl) => {
-          rsiSeries.createPriceLine({ price: lvl.price, color: lvl.color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
-        });
-
-        trendSeries = rsiChart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
-
-        // Synchronize Visible Ranges
-        mainChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
-          if (range && rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
-        });
-        rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range: any) => {
-          if (range && mainChart) mainChart.timeScale().setVisibleLogicalRange(range);
-        });
+        rsiChart = rsi;
+        rsiSeries = rsiLine;
       }
 
       chartRefs.current = { mainChart, candleSeries, indicatorSeries: {}, rsiChart, rsiSeries, trendSeries };
     }
 
-    // 2nd stage: Update data without resetting pan/zoom
     const refs = chartRefs.current;
 
-    if (candles && candles.length > 0) {
-      const mappedCandles = candles.map((c) => ({
-        time: formatChartTime(c.time) as any,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }));
-      const uniqueCandles = Array.from(new Map(mappedCandles.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
-      refs.candleSeries.setData(uniqueCandles);
+    if (candles.length > 0) {
+      refs.candleSeries.setData(toSeriesData(candles));
     }
 
-    if (indicators) {
-      indicators.forEach((ind) => {
-        if (visibleNames[ind.name]) {
-          if (!refs.indicatorSeries[ind.name]) {
-            refs.indicatorSeries[ind.name] = refs.mainChart.addSeries(LineSeries, {
-              color: ind.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: true,
-            });
-          }
-          const mappedLine = ind.data.map((d) => ({
-            time: formatChartTime(d.time) as any,
-            value: d.value,
-          }));
-          const uniqueLine = Array.from(new Map(mappedLine.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
-          refs.indicatorSeries[ind.name].setData(uniqueLine);
-        } else if (refs.indicatorSeries[ind.name]) {
-          refs.mainChart.removeSeries(refs.indicatorSeries[ind.name]);
-          delete refs.indicatorSeries[ind.name];
-        }
-      });
-    }
-
-    if (rsiPane && refs.rsiChart) {
-      if (rsiPane.rsi && rsiPane.rsi.length > 0) {
-        const mappedRsi = rsiPane.rsi.map((d) => ({
-          time: formatChartTime(d.time) as any,
-          value: d.value,
-        }));
-        const uniqueRsi = Array.from(new Map(mappedRsi.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
-        refs.rsiSeries.setData(uniqueRsi);
+    indicators.forEach((ind, idx) => {
+      const existing = refs.indicatorSeries[ind.name];
+      if (isVisible(ind.name, idx)) {
+        const series = existing ?? refs.mainChart.addSeries(LineSeries, {
+          color: ind.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: true,
+        });
+        refs.indicatorSeries[ind.name] = series;
+        series.setData(toSeriesData(ind.data));
+      } else if (existing) {
+        refs.mainChart.removeSeries(existing);
+        delete refs.indicatorSeries[ind.name];
       }
-      if (rsiPane.trendline && rsiPane.trendline.length > 1) {
-        const mappedTrend = rsiPane.trendline.map((d) => ({
-          time: formatChartTime(d.time) as any,
-          value: d.value,
-        }));
-        const uniqueTrend = Array.from(new Map(mappedTrend.map((item) => [item.time, item])).values()).sort((a, b) => a.time - b.time);
-        refs.trendSeries.setData(uniqueTrend);
-      }
-    }
-  }, [candles, indicators, rsiPane, height, visibleNames]); 
+    });
 
-  // 3rd stage: Cleanup
+    if (rsiPane && refs.rsiSeries && refs.trendSeries) {
+      if (rsiPane.rsi?.length > 0) refs.rsiSeries.setData(toSeriesData(rsiPane.rsi));
+      if (rsiPane.trendline?.length > 1) refs.trendSeries.setData(toSeriesData(rsiPane.trendline));
+    }
+    // visibleKey captures every visibility change; isVisible itself is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles, indicators, rsiPane, height, visibleKey]);
+
+  // Cleanup
   useEffect(() => {
     return () => {
-      if (chartRefs.current) {
-        try { chartRefs.current.mainChart.remove(); } catch(e) {}
-        try { if (chartRefs.current.rsiChart) chartRefs.current.rsiChart.remove(); } catch(e) {}
-        chartRefs.current = null;
-      }
+      if (!chartRefs.current) return;
+      chartRefs.current.mainChart.remove();
+      chartRefs.current.rsiChart?.remove();
+      chartRefs.current = null;
     };
   }, []);
 
-  // 4th stage: ResizeObserver
+  // Keep chart width in sync with the container
   useEffect(() => {
     const updateDimensions = () => {
-      if (chartRefs.current) {
-        if (mainChartContainerRef.current) chartRefs.current.mainChart.applyOptions({ width: mainChartContainerRef.current.clientWidth });
-        if (rsiChartContainerRef.current && chartRefs.current.rsiChart) chartRefs.current.rsiChart.applyOptions({ width: rsiChartContainerRef.current.clientWidth });
-      }
+      if (!chartRefs.current) return;
+      if (mainChartContainerRef.current) chartRefs.current.mainChart.applyOptions({ width: mainChartContainerRef.current.clientWidth });
+      if (rsiChartContainerRef.current) chartRefs.current.rsiChart?.applyOptions({ width: rsiChartContainerRef.current.clientWidth });
     };
     const resizeObserver = new ResizeObserver(() => requestAnimationFrame(updateDimensions));
     if (mainChartContainerRef.current) resizeObserver.observe(mainChartContainerRef.current);
     if (rsiChartContainerRef.current) resizeObserver.observe(rsiChartContainerRef.current);
-    
     return () => resizeObserver.disconnect();
   }, []);
-
-  const activeCount = indicators.filter((i) => visibleNames[i.name]).length;
 
   return (
     <div className="w-full space-y-2 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/60">
         <div className="flex flex-wrap items-center gap-1.5">
-          {indicators.map((ind) => {
-            const isVisible = !!visibleNames[ind.name];
+          {indicators.map((ind, idx) => {
+            const visible = isVisible(ind.name, idx);
             return (
               <button
                 key={ind.name}
                 type="button"
-                onClick={() => toggleSingleIndicator(ind.name)}
-                title={isVisible ? 'Grafikte Gizle' : 'Grafikte Göster'}
+                onClick={() => toggleSingleIndicator(ind.name, idx)}
+                title={visible ? 'Grafikte Gizle' : 'Grafikte Göster'}
                 className={`flex items-center space-x-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition-all cursor-pointer select-none ${
-                  isVisible
+                  visible
                     ? 'bg-[#161b26] border-slate-700 text-slate-100 shadow-sm'
                     : 'bg-[#0b0e14]/40 border-slate-800/60 text-slate-500 opacity-60 hover:opacity-90'
                 }`}
@@ -260,11 +212,11 @@ export default function ChartWrapper({
                 <span
                   className="h-2 w-2 rounded-full shrink-0 transition-transform"
                   style={{
-                    backgroundColor: isVisible ? ind.color : '#475569',
-                    transform: isVisible ? 'scale(1)' : 'scale(0.8)',
+                    backgroundColor: visible ? ind.color : '#475569',
+                    transform: visible ? 'scale(1)' : 'scale(0.8)',
                   }}
                 />
-                <span className={isVisible ? '' : 'line-through'}>{ind.name}</span>
+                <span className={visible ? '' : 'line-through'}>{ind.name}</span>
               </button>
             );
           })}
@@ -273,7 +225,7 @@ export default function ChartWrapper({
         <div className="flex items-center space-x-2 shrink-0">
           {headerAction}
 
-          {indicators && indicators.length > 0 && (
+          {indicators.length > 0 && (
             <button
               type="button"
               onClick={handleToggleAll}

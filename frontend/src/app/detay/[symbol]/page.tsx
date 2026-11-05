@@ -1,47 +1,20 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
   ArrowLeft, CheckCircle2, XCircle, 
-  TrendingUp, TrendingDown, ShieldCheck, ChevronRight 
+  TrendingUp, TrendingDown, ShieldCheck, ChevronRight,
+  PieChart
 } from 'lucide-react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
 import ScoreGauge from '@/components/ui/ScoreGauge';
-import { API_URL } from '@/services/api';
+import { fetchMarketData, MarketData, PeriodicReturnItem } from '@/services/api';
+import RuleConditionText from '@/components/rules/RuleConditionText';
 
-interface RuleBreakdownItem {
-  id: number;
-  name: string;
-  timeframe: string;
-  is_primary_filter?: boolean;
-  score_impact?: number;
-  earned_score?: number;
-  is_met?: boolean;
-  passed?: boolean;
-  current_value?: number | null;
-  target_value?: number | null;
-  left_value?: number | null;
-  right_value?: number | null;
-  condition?: string;
-}
-
-interface StockDetailData {
-  symbol: string;
-  name?: string;
-  interval: string;
-  current_price: number;
-  change_pct: number;
-  candles: any[];
-  score: number;
-  primary_filter_passed: boolean;
-  primary_filter_timeframe: string;
-  rules_breakdown: RuleBreakdownItem[];
-  indicators: any[];
-  rsiPane: any;
-}
+type StockDetailData = MarketData;
 
 const BIST_COMPANY_NAMES: Record<string, string> = {
   KORDS: "Kordsa Teknik Tekstil A.Ş.",
@@ -90,41 +63,6 @@ const TIMEFRAME_OPTIONS = [
   { label: '1 G', value: '1d', period: '1y' },
 ];
 
-// Helper function to render human-readable condition text and reference values
-function renderConditionText(rule: RuleBreakdownItem) {
-  const curVal = rule.current_value ?? rule.left_value;
-  const targetVal = rule.target_value ?? rule.right_value;
-  const formattedCur = curVal !== undefined && curVal !== null ? Number(curVal).toFixed(2) : null;
-  const formattedTarget = targetVal !== undefined && targetVal !== null ? Number(targetVal).toFixed(2) : null;
-  const cond = rule.condition || '>';
-
-  // 1. If rule is an RSI range (e.g. RSI 0-30)
-  if (rule.name?.includes('(0-30)') || rule.name?.toLowerCase().includes('aşırı satım')) {
-    if (formattedCur !== null) {
-      return (
-        <span>
-          Anlık RSI: <strong className="text-slate-200">{formattedCur}</strong>{' '}
-          <span className="text-slate-500">| Hedef Aralık:</span>{' '}
-          <strong className="text-amber-400">[0 - 30]</strong>
-        </span>
-      );
-    }
-  }
-
-  // 2. Standard comparison rule (e.g. MA(9) > MA(14))
-  if (formattedCur !== null && formattedTarget !== null) {
-    return (
-      <span>
-        Anlık: <strong className="text-slate-200">{formattedCur}</strong>{' '}
-        <span className="text-slate-500">{cond}</span>{' '}
-        Referans: <strong className="text-slate-200">{formattedTarget}</strong>
-      </span>
-    );
-  }
-
-  return <span className="text-slate-500">Şart durumu izleniyor</span>;
-}
-
 export default function StockDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -132,7 +70,6 @@ export default function StockDetailPage() {
 
   const [timeframe, setTimeframe] = useState<string>('15m');
   const [data, setData] = useState<StockDetailData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
 
   const handleSmartBack = () => {
     if (typeof window !== 'undefined' && window.history.length > 1 && document.referrer.includes(window.location.host)) {
@@ -148,37 +85,49 @@ export default function StockDetailPage() {
     return `${symbol} Pay Piyasası`;
   }, [data, symbol]);
 
-  const fetchStockData = useCallback(async (selectedTf: string) => {
+  // Fetch on timeframe change and keep refreshing every 15s; `loading` lasts until the first response for this timeframe
+  const [loadedTimeframe, setLoadedTimeframe] = useState<string | null>(null);
+  const loading = loadedTimeframe !== timeframe;
+
+  useEffect(() => {
     if (!symbol) return;
-    try {
-      const activeOption = TIMEFRAME_OPTIONS.find((opt) => opt.value === selectedTf) || TIMEFRAME_OPTIONS[1];
-      const res = await fetch(`${API_URL}/market/${symbol}?interval=${activeOption.value}&period=${activeOption.period}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+    const option = TIMEFRAME_OPTIONS.find((opt) => opt.value === timeframe) || TIMEFRAME_OPTIONS[1];
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const result = await fetchMarketData(symbol, option.value, option.period);
+        if (!cancelled) setData(result);
+      } catch (err) {
+        console.error('Hisse detay yükleme hatası:', err);
+        if (!cancelled) setData(null);
+      } finally {
+        if (!cancelled) setLoadedTimeframe(timeframe);
       }
-    } catch (err) {
-      console.error('Hisse detay yükleme hatası:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [symbol]);
+    };
 
-  useEffect(() => {
-    setLoading(true);
-    fetchStockData(timeframe);
-  }, [timeframe, fetchStockData]);
+    load();
+    const timer = setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [symbol, timeframe]);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      fetchStockData(timeframe);
-    }, 15000);
-    return () => clearInterval(timer);
-  }, [timeframe, fetchStockData]);
+  const periodicReturns: PeriodicReturnItem[] = data?.periodic_returns ?? [];
+
+  const formatLargeCurrency = (val?: number | null) => {
+    if (!val || val === 0) return '---';
+    if (val >= 1_000_000_000) return `₺${(val / 1_000_000_000).toFixed(2)} Mr`;
+    if (val >= 1_000_000) return `₺${(val / 1_000_000).toFixed(2)} Mn`;
+    return `₺${val.toLocaleString('tr-TR')}`;
+  };
+
+  const hasValidData = data && data.candles && data.candles.length > 0;
 
   return (
     <div className="min-h-screen bg-[#0b0e14] text-slate-100 flex flex-col">
-      {/* Top Navigation Bar with sticky blur */}
+      {/* Top Navigation Bar */}
       <header className="px-4 sm:px-8 py-3.5 border-b border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between">
         <div className="flex items-center space-x-3 sm:space-x-4">
           <button
@@ -198,154 +147,275 @@ export default function StockDetailPage() {
           </div>
         </div>
 
-        {/* Custom Rule-Specific Alert Dropdown */}
         <StockAlertDropdown symbol={symbol} />
       </header>
 
-      {/* Main Content */}
+      {/* Main Content Workspace */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
-          <div className="flex items-center space-x-4">
-            <div className="h-12 w-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center font-mono font-bold text-blue-400 text-base shrink-0">
-              {symbol.slice(0, 3)}
-            </div>
-            <div>
-              <div className="flex items-center space-x-2.5">
-                <h1 className="text-2xl font-black font-mono tracking-tight text-white">{symbol}</h1>
-                <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold ${
-                  data?.primary_filter_passed 
-                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
-                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                }`}>
-                  {data?.primary_filter_passed ? 'FİLTRE ONAYLANDI' : 'FİLTRE BEKLENİYOR'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1 font-medium truncate max-w-[280px] sm:max-w-md">
-                {companyTitle}
-              </p>
-            </div>
+        
+        {/* Loading State */}
+        {loading && (
+          <div className="min-h-[460px] flex items-center justify-center border border-dashed border-slate-800/80 rounded-2xl bg-[#12161f]/30 text-xs font-mono text-slate-400">
+            {symbol} detay verileri yükleniyor...
           </div>
+        )}
 
-          <div className="flex items-center space-x-6 shrink-0">
-            <div className="text-right">
-              <div className="text-2xl font-black font-mono text-white">
-                ₺{data?.current_price?.toFixed(2) ?? '---'}
-              </div>
-              <div className={`text-xs font-mono font-semibold flex items-center justify-end space-x-1 ${
-                (data?.change_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-              }`}>
-                {(data?.change_pct ?? 0) >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                <span>{(data?.change_pct ?? 0) >= 0 ? '+' : ''}{data?.change_pct?.toFixed(2)}%</span>
-              </div>
+        {/* 404 Empty State for Unknown or Inactive Symbol */}
+        {!loading && !hasValidData && (
+          <div className="min-h-[460px] flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/80 rounded-2xl bg-[#12161f]/30">
+            <div className="h-14 w-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-rose-400 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
+              <XCircle className="h-7 w-7" />
             </div>
-
-            <div className="h-10 w-px bg-slate-800 hidden sm:block" />
-
-            {/* Circular Speedometer Gauge for Stock Detail Header */}
-            <div className="flex items-center space-x-3">
-              <ScoreGauge score={data?.score} size="md" showDecimals={true} />
-              <div className="hidden sm:flex flex-col text-left">
-                <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
-                  Kural Skoru
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  / 100 Puan
-                </span>
-              </div>
-            </div>
+            <h3 className="text-lg font-bold text-slate-200 tracking-tight">
+              {symbol} Sembolü Bulunamadı
+            </h3>
+            <p className="text-xs text-slate-400 mt-1.5 max-w-sm leading-relaxed">
+              Borsa İstanbul evreninde bu koda ait aktif piyasa verisi veya kural karnesi tespit edilemedi.
+            </p>
+            <button
+              onClick={() => router.push('/ana-sayfa')}
+              className="mt-5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-colors cursor-pointer"
+            >
+              Ana Panele Geri Dön
+            </button>
           </div>
-        </div>
+        )}
 
-        {/* Timeframe Selection */}
-        <div className="flex items-center space-x-1 bg-[#12161f] p-1 rounded-xl border border-slate-800/80 w-fit">
-          {TIMEFRAME_OPTIONS.map((opt) => {
-            const isSelected = timeframe === opt.value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setTimeframe(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
-                  isSelected
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Chart View */}
-        <div className="p-4 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
-          {loading ? (
-            <div className="h-[480px] flex items-center justify-center text-xs font-mono text-slate-500">
-              Grafik ve teknik veriler yükleniyor...
-            </div>
-          ) : data?.candles && data.candles.length > 0 ? (
-            <ChartWrapper
-              candles={data.candles}
-              indicators={data.indicators}
-              rsiPane={data.rsiPane}
-              height={360}
-            />
-          ) : (
-            <div className="h-[480px] flex items-center justify-center text-xs font-mono text-slate-500">
-              Bu periyotta gösterilecek mum verisi bulunamadı.
-            </div>
-          )}
-        </div>
-
-        {/* Rule Analysis Report - Fully Aligned with Backend Response */}
-        <div className="space-y-3">
-          <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
-            <ShieldCheck className="h-4 w-4 text-blue-400" />
-            <span>Kural Analiz Karnesi ({symbol})</span>
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {data?.rules_breakdown?.map((rule) => {
-              const isMet = rule.is_met ?? rule.passed ?? false;
-              const scoreVal = isMet ? (rule.earned_score ?? rule.score_impact ?? 0) : 0;
-
-              return (
-                <div
-                  key={rule.id}
-                  className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
-                    isMet
-                      ? 'bg-emerald-950/15 border-emerald-500/30'
-                      : 'bg-[#12161f]/40 border-slate-800/80'
-                  }`}
-                >
-                  <div className="space-y-1.5 pr-3 min-w-0">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs font-semibold text-slate-200 truncate">{rule.name}</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
-                        {rule.timeframe?.toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="text-[11px] font-mono text-slate-400">
-                      {renderConditionText(rule)}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2 shrink-0 ml-2">
-                    <span className={`text-xs font-mono font-bold ${isMet ? 'text-emerald-400' : 'text-slate-500'}`}>
-                      {isMet ? `+${scoreVal}p` : '0.00'}
+        {/* Full Details Content (Rendered when valid data exists) */}
+        {!loading && hasValidData && (
+          <>
+            {/* Header Summary Hero Card */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#12161f]/60 border border-slate-800/80 shadow-xl backdrop-blur-sm">
+              <div className="flex items-center space-x-4">
+                <div className="h-12 w-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center font-mono font-bold text-blue-400 text-base shrink-0">
+                  {symbol.slice(0, 3)}
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2.5">
+                    <h1 className="text-2xl font-black font-mono tracking-tight text-white">{symbol}</h1>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold ${
+                      data.primary_filter_passed 
+                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
+                        : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                    }`}>
+                      {data.primary_filter_passed ? 'FİLTRE ONAYLANDI' : 'FİLTRE BEKLENİYOR'}
                     </span>
-                    {isMet ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-slate-600" />
-                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1 font-medium truncate max-w-[280px] sm:max-w-md">
+                    {companyTitle}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-6 shrink-0">
+                <div className="text-right">
+                  <div className="text-2xl font-black font-mono text-white">
+                    ₺{data.current_price.toFixed(2)}
+                  </div>
+                  <div className={`text-xs font-mono font-semibold flex items-center justify-end space-x-1 ${
+                    data.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}>
+                    {data.change_pct >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                    <span>{data.change_pct >= 0 ? '+' : ''}{data.change_pct.toFixed(2)}%</span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
+
+                <div className="h-10 w-px bg-slate-800 hidden sm:block" />
+
+                {/* Circular Speedometer Score Gauge */}
+                <div className="flex items-center space-x-3">
+                  <ScoreGauge score={data.score} size="md" showDecimals={true} />
+                  <div className="hidden sm:flex flex-col text-left">
+                    <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
+                      Kural Skoru
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      / 100 Puan
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 1st SECTION: Periodic Returns Strip (1H, 1A, 3A, 6A, 1Y) */}
+            {periodicReturns.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 select-none">
+                {periodicReturns.map((item) => {
+                  const isPositive = item.change_pct >= 0;
+                  return (
+                    <div
+                      key={item.period}
+                      className="flex flex-col p-3 rounded-xl border border-slate-800/80 bg-[#12161f]/40 hover:border-slate-700/80 transition-all"
+                    >
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
+                        <span>{item.label}</span>
+                        <span className="text-[10px] font-mono text-slate-500">{item.period}</span>
+                      </div>
+                      <div className="mt-1 flex items-center space-x-1 font-mono text-base font-bold">
+                        <span className={isPositive ? 'text-emerald-400' : 'text-rose-400'}>
+                          {isPositive ? '+' : ''}{item.change_pct.toFixed(2)}%
+                        </span>
+                        {isPositive ? (
+                          <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+                        ) : (
+                          <TrendingDown className="h-3.5 w-3.5 text-rose-400" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Timeframe Selection Bar */}
+            <div className="flex items-center space-x-1 bg-[#12161f] p-1 rounded-xl border border-slate-800/80 w-fit">
+              {TIMEFRAME_OPTIONS.map((opt) => {
+                const isSelected = timeframe === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setTimeframe(opt.value)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Interactive Chart Container */}
+            <div className="p-4 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
+              <ChartWrapper
+                candles={data.candles}
+                indicators={data.indicators}
+                rsiPane={data.rsi_pane}
+                height={380}
+              />
+            </div>
+
+            {/* 2nd SECTION: Key Fundamental Ratios Grid */}
+            <div className="space-y-3">
+              <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
+                <PieChart className="h-4 w-4 text-amber-400" />
+                <span>Temel Borsa Rasyoları & Finansal Göstergeler</span>
+              </h2>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {/* Market Value */}
+                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
+                  <span className="text-[11px] font-medium text-slate-400">Piyasa Değeri</span>
+                  <div className="text-base sm:text-lg font-bold font-mono text-slate-100 mt-1">
+                    {formatLargeCurrency(data.fundamentals?.market_cap)}
+                  </div>
+                </div>
+
+                {/* Free-Float Ratio */}
+                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
+                  <span className="text-[11px] font-medium text-slate-400">Fiili Dolaşım (Halka Açıklık)</span>
+                  <div className="text-base sm:text-lg font-bold font-mono text-cyan-400 mt-1">
+                    {data.fundamentals?.free_float_pct !== undefined && data.fundamentals?.free_float_pct !== null
+                      ? `%${data.fundamentals.free_float_pct.toFixed(2)}`
+                      : '---'}
+                  </div>
+                </div>
+
+                {/* P/E (F/K) Ratio */}
+                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
+                  <span className="text-[11px] font-medium text-slate-400">F/K (Fiyat / Kazanç)</span>
+                  <div className="text-base sm:text-lg font-bold font-mono text-amber-300 mt-1">
+                    {data.fundamentals?.pe_ratio !== undefined && data.fundamentals?.pe_ratio !== null
+                      ? data.fundamentals.pe_ratio.toFixed(2)
+                      : '---'}
+                  </div>
+                </div>
+
+                {/* P/B (PD/DD) Ratio */}
+                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
+                  <span className="text-[11px] font-medium text-slate-400">PD / DD (Piyasa / Defter Değeri)</span>
+                  <div className="text-base sm:text-lg font-bold font-mono text-purple-300 mt-1">
+                    {data.fundamentals?.pb_ratio !== undefined && data.fundamentals?.pb_ratio !== null
+                      ? data.fundamentals.pb_ratio.toFixed(2)
+                      : '---'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3rd SECTION: Rule Analysis Report */}
+            <div className="space-y-3">
+              <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
+                <ShieldCheck className="h-4 w-4 text-blue-400" />
+                <span>Kural Analiz Karnesi ({symbol})</span>
+              </h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {data.rules_breakdown?.map((rule) => {
+                  const isMet = rule.is_met;
+                  const scoreVal = isMet ? (rule.earned_score ?? rule.score_impact ?? 0) : 0;
+
+                  return (
+                    <div
+                      key={rule.id}
+                      className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
+                        isMet
+                          ? 'bg-emerald-950/15 border-emerald-500/30'
+                          : 'bg-[#12161f]/40 border-slate-800/80'
+                      }`}
+                    >
+                      <div className="space-y-1.5 pr-3 min-w-0">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs font-semibold text-slate-200 truncate">{rule.name}</span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                            {rule.timeframe?.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-400">
+                          <RuleConditionText rule={rule} />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 shrink-0 ml-2">
+                        <span className={`text-xs font-mono font-bold ${isMet ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {isMet ? `+${scoreVal}p` : '0.00'}
+                        </span>
+                        {isMet ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-slate-600" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
       </main>
+
+      {/* Legal Disclaimer Footer */}
+      <footer className="mt-12 border-t border-slate-800/60 bg-[#080a0f] px-6 py-6 text-center select-none">
+        <div className="max-w-5xl mx-auto flex flex-col items-center space-y-2">
+          <div className="flex items-center space-x-2 text-slate-400 text-xs font-semibold">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+            <span>Yasal Uyarı & Bilgilendirme</span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            Burada yer alan yatırım bilgi, yorum ve tavsiyeleri yatırım danışmanlığı kapsamında değildir. 
+            Platformumuzda sunulan tüm veriler, göstergeler ve algoritmik skorlar kullanıcı tarafından belirlenen 
+            veya sisteme tanımlanmış matematiksel teknik analiz koşullarının izlenmesi amacıyla üretilmekte olup 
+            hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır[cite: 3].
+          </p>
+          <p className="text-[10px] text-slate-400 font-mono">
+            © {new Date().getFullYear()} BIST Tracker. Tüm hakları saklıdır.
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
