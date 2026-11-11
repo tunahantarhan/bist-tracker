@@ -9,8 +9,14 @@ class Settings(BaseSettings):
     # Auth
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320  # 3 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Admin-scoped sessions (issued only after 2FA) expire sooner
+    ADMIN_REFRESH_TOKEN_EXPIRE_HOURS: int = 12
+    EMAIL_VERIFY_TOKEN_EXPIRE_HOURS: int = 24
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # Window between a correct admin password and the 2FA code
+    MFA_PENDING_TOKEN_EXPIRE_MINUTES: int = 5
 
     # Database
     POSTGRES_USER: str = "postgres"
@@ -27,6 +33,8 @@ class Settings(BaseSettings):
     # Web
     FRONTEND_URL: str = "http://localhost:3000"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Enable only behind a reverse proxy that sets X-Forwarded-For (used for rate limiting)
+    TRUST_PROXY_HEADERS: bool = False
 
     # SMTP (email alerts are skipped when user/password are empty)
     SMTP_SERVER: str = "smtp.gmail.com"

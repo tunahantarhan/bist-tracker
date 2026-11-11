@@ -33,7 +33,7 @@ class EmailService:
             return
 
         msg = MIMEMultipart("alternative")
-        msg["From"] = f"BIST Tracker <{self.sender_email}>"
+        msg["From"] = f"{settings.PROJECT_NAME} <{self.sender_email}>"
         msg["To"] = to_email
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "html", "utf-8"))
@@ -48,9 +48,12 @@ class EmailService:
                     server.starttls()
                     server.login(self.sender_email, self.sender_password)
                     server.send_message(msg)
-            logger.info("Alert email sent to %s", to_email)
+            logger.info("Email sent to %s", to_email)
         except Exception as e:
             logger.error("Email delivery failed (%s): %s", to_email, e)
 
-    async def send_alert_email(self, to_email: str, subject: str, body: str) -> None:
+    async def send_email(self, to_email: str, subject: str, body: str) -> None:
         await asyncio.to_thread(self._send_sync_email, to_email, subject, body)
+
+    async def send_alert_email(self, to_email: str, subject: str, body: str) -> None:
+        await self.send_email(to_email, subject, body)

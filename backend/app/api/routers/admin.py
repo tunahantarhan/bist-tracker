@@ -21,7 +21,10 @@ def _serialize_user(u: User) -> dict:
         "tier": u.tier.value if isinstance(u.tier, SubscriptionTier) else str(u.tier or "FREE"),
         "is_admin": bool(u.is_admin),
         "is_active": bool(u.is_active),
+        "is_verified": bool(u.is_verified),
+        "totp_enabled": bool(u.totp_enabled),
         "created_at": u.created_at.strftime("%d.%m.%Y %H:%M") if u.created_at else "--",
+        "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
     }
 
 
@@ -69,11 +72,44 @@ async def update_user(
             user.tier = SubscriptionTier(payload.tier.upper())
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Geçersiz paket türü") from None
-    if payload.is_active is not None:
+    revoke_sessions = False
+    if payload.is_active is not None and payload.is_active != user.is_active:
         user.is_active = payload.is_active
-    if payload.is_admin is not None:
+        revoke_sessions = revoke_sessions or not payload.is_active
+    if payload.is_admin is not None and payload.is_admin != user.is_admin:
         user.is_admin = payload.is_admin
+        if not payload.is_admin:
+            # A demoted admin must enrol again if promoted later
+            user.totp_secret = None
+            user.totp_enabled = False
+            user.totp_last_counter = None
+            revoke_sessions = True
+    if revoke_sessions:
+        # Suspended or demoted accounts lose their open sessions immediately
+        user.token_version += 1
 
+    await db.commit()
+    await db.refresh(user)
+    return {"status": "success", "user": _serialize_user(user)}
+
+
+@router.post("/users/{user_id}/reset-2fa")
+async def reset_user_2fa(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """Clears another admin's authenticator (e.g. lost phone); they enrol again on next sign-in."""
+    if user_id == current_admin.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kendi iki adımlı doğrulamanızı sıfırlayamazsınız.")
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kullanıcı bulunamadı")
+
+    user.totp_secret = None
+    user.totp_enabled = False
+    user.totp_last_counter = None
+    user.token_version += 1
     await db.commit()
     await db.refresh(user)
     return {"status": "success", "user": _serialize_user(user)}
