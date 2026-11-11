@@ -9,6 +9,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
+  --font-data: var(--font-jetbrains-mono), ui-monospace, monospace;
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -169,3 +170,35 @@
   background: #475569;
 }
 
+
+/* Auth screens: the RSI breakout illustration draws itself once */
+@keyframes draw-line {
+  from { stroke-dashoffset: var(--path-length, 1000); }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes breakout-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0; transform: scale(2.4); }
+}
+.animate-draw-line {
+  stroke-dasharray: var(--path-length, 1000);
+  animation: draw-line var(--draw-duration, 2.4s) cubic-bezier(0.65, 0, 0.35, 1) var(--draw-delay, 0s) both;
+}
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out var(--fade-delay, 0s) both;
+}
+.animate-breakout-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: breakout-pulse 2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-draw-line, .animate-fade-up, .animate-breakout-pulse {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}

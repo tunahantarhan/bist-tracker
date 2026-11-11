@@ -14,10 +14,11 @@ import ChartWrapper from '@/components/charts/ChartWrapper';
 import { 
   fetchMarketData, fetchUniverse, fetchActiveUniverse, fetchRules, deleteRule, updateRule,
   updateActiveUniverse, MarketData, fetchAdminStats, 
-  fetchAdminUsers, updateAdminUser, AdminStats, AdminUserItem 
+  fetchAdminUsers, updateAdminUser, resetAdminUser2fa, AdminStats, AdminUserItem 
 } from '@/services/api';
 import { Rule } from '@/types';
 import { clearSession, getAccessToken, isAdminSession } from '@/lib/auth';
+import { BRAND } from '@/lib/brand';
 
 type AdminTab = 'rules' | 'users' | 'settings' | null;
 
@@ -31,6 +32,49 @@ const CHART_PERIODS = [
   { value: '6mo', label: '6A' }, { value: '1y', label: '1Y' },
   { value: '2y', label: '2Y' }, { value: '5y', label: '5Y' },
 ];
+
+function UserSecurityBadges({
+  user,
+  disabled,
+  onReset2fa,
+}: {
+  user: AdminUserItem;
+  disabled: boolean;
+  onReset2fa: (user: AdminUserItem) => void;
+}) {
+  return (
+    <div className="mt-1 flex flex-wrap items-center justify-end gap-1 md:justify-start">
+      {!user.is_verified && (
+        <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+          E-posta doğrulanmadı
+        </span>
+      )}
+      {user.is_admin && (
+        <>
+          <span
+            className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+              user.totp_enabled
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : 'border-slate-700 bg-slate-800 text-slate-400'
+            }`}
+          >
+            {user.totp_enabled ? '2FA açık' : '2FA kurulmadı'}
+          </span>
+          {user.totp_enabled && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onReset2fa(user)}
+              className="cursor-pointer rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 underline-offset-2 hover:text-rose-300 hover:underline disabled:opacity-50"
+            >
+              2FA sıfırla
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -89,12 +133,9 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      router.push('/giris');
-      return;
-    }
-    if (!isAdminSession()) {
-      router.push('/ana-sayfa');
+    // The panel requires an admin-scoped session (password + 2FA via /admin/giris)
+    if (!getAccessToken() || !isAdminSession()) {
+      router.replace('/admin/giris');
       return;
     }
     fetchRules()
@@ -222,6 +263,20 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleReset2fa = async (user: AdminUserItem) => {
+    const question = `${user.email} için iki adımlı doğrulama sıfırlansın mı? Açık oturumları kapanır ve bir sonraki yönetici girişinde doğrulama uygulamasını yeniden kurar.`;
+    if (!window.confirm(question)) return;
+    setUpdatingUserId(user.id);
+    try {
+      const res = await resetAdminUser2fa(user.id);
+      setUsersList((prev) => prev.map((u) => (u.id === user.id ? res.user : u)));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'İki adımlı doğrulama sıfırlanamadı');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
   const universeQueryNorm = universeQuery.trim().toLocaleLowerCase('tr-TR');
   // Chips shown in the universe tab (filtered by the tab's own search box)
   const universeChips = universeQueryNorm
@@ -248,7 +303,7 @@ export default function AdminDashboard() {
     rules: { title: 'Kural Motoru', subtitle: 'Teknik kuralları, eşik değerlerini ve ağırlıkları yönetin.' },
     users: { title: 'Kullanıcı Yönetimi', subtitle: 'Kayıtlı kullanıcıları ve abonelik paketlerini yönetin.' },
     settings: { title: 'Sistem Ayarları', subtitle: 'Arka planda taranan BIST hisse havuzunu yapılandırın.' },
-  }[activeTab || 'rules'] || { title: 'Admin Paneli', subtitle: 'BIST Tracker Sistem Kontrol Merkezi' };
+  }[activeTab || 'rules'] || { title: 'Admin Paneli', subtitle: `${BRAND.name} Sistem Kontrol Merkezi` };
 
   return (
     <div className="flex h-screen bg-[#0b0e14] text-slate-100 overflow-hidden font-sans">
@@ -341,7 +396,7 @@ export default function AdminDashboard() {
           <button 
             onClick={() => {
               clearSession();
-              router.push('/giris');
+              router.push('/admin/giris');
             }}
             className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg bg-rose-950/25 border border-rose-500/10 text-rose-400 hover:bg-rose-900/40 hover:border-rose-500/30 hover:text-rose-200 transition-all duration-200 cursor-pointer"
           >
@@ -416,7 +471,7 @@ export default function AdminDashboard() {
                   Admin Paneline Hoş Geldiniz
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-400 mt-2 max-w-2xl leading-relaxed">
-                  Bu panel üzerinden BIST Tracker platformunun kural motorunu, arka planda taranan aktif hisse evrenini ve kayıtlı kullanıcıların abonelik katmanlarını yönetebilirsiniz.
+                  Bu panel üzerinden {BRAND.name} platformunun kural motorunu, arka planda taranan aktif hisse evrenini ve kayıtlı kullanıcıların abonelik katmanlarını yönetebilirsiniz.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-6 sm:mt-8">
@@ -713,6 +768,7 @@ export default function AdminDashboard() {
                                   Yönetici
                                 </span>
                               )}
+                              <UserSecurityBadges user={user} disabled={isMutating} onReset2fa={handleReset2fa} />
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -785,6 +841,7 @@ export default function AdminDashboard() {
                                     Kullanıcı
                                   </span>
                                 )}
+                                <UserSecurityBadges user={user} disabled={isMutating} onReset2fa={handleReset2fa} />
                               </td>
 
                               {/* Subscription Tier Selector */}

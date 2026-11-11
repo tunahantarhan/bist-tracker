@@ -1,5 +1,6 @@
 'use client';
 
+import { BRAND } from '@/lib/brand';
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -413,7 +414,7 @@ export default function StockDetailPage() {
             hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır.
           </p>
           <p className="text-[10px] text-slate-400 font-mono">
-            © {new Date().getFullYear()} BIST Tracker. Tüm hakları saklıdır.
+            © {new Date().getFullYear()} {BRAND.name}. Tüm hakları saklıdır.
           </p>
         </div>
       </footer>

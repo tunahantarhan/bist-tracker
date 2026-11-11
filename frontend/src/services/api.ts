@@ -10,9 +10,12 @@ export const API_URL = API_BASE_URL;
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Machine-readable reason sent by the backend, e.g. "email_not_verified" */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -85,19 +88,30 @@ async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Re
   return doFetch(newToken);
 }
 
-async function readError(res: Response, fallback: string): Promise<string> {
+/** Turns a FastAPI error body (string, {code, message} or validation list) into an ApiError. */
+async function toApiError(res: Response, fallback: string): Promise<ApiError> {
   try {
     const data = await res.json();
-    if (Array.isArray(data.detail)) return data.detail.map((d: { msg?: string }) => d.msg).join(', ');
-    return data.detail || fallback;
+    const detail = data.detail;
+    if (Array.isArray(detail)) {
+      const message = detail
+        .map((d: { msg?: string }) => (d.msg || '').replace(/^Value error, /, ''))
+        .filter(Boolean)
+        .join(', ');
+      return new ApiError(message || fallback, res.status, 'validation_error');
+    }
+    if (detail && typeof detail === 'object') {
+      return new ApiError(detail.message || fallback, res.status, detail.code);
+    }
+    return new ApiError(detail || fallback, res.status);
   } catch {
-    return fallback;
+    return new ApiError(fallback, res.status);
   }
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}, errorMessage = 'İstek başarısız oldu'): Promise<T> {
   const res = await fetchWithAuth(`${API_BASE_URL}${path}`, { cache: 'no-store', ...options });
-  if (!res.ok) throw new ApiError(await readError(res, errorMessage), res.status);
+  if (!res.ok) throw await toApiError(res, errorMessage);
   return res.json();
 }
 
@@ -215,6 +229,8 @@ export interface MarketOverviewResponse {
   top_scored: StockOverviewItem[];
   top_priced: StockOverviewItem[];
   primary_filter_timeframe?: string;
+  /** Unix seconds of the scan that produced this payload */
+  generated_at?: number;
 }
 
 export interface AppNotification {
@@ -245,6 +261,8 @@ export interface UserProfile {
   tier: string;
   is_active: boolean;
   is_admin: boolean;
+  is_verified: boolean;
+  totp_enabled: boolean;
   terms_accepted_at: string;
 }
 
@@ -262,7 +280,10 @@ export interface AdminUserItem {
   tier: 'FREE' | 'STANDARD' | 'PREMIUM';
   is_admin: boolean;
   is_active: boolean;
+  is_verified: boolean;
+  totp_enabled: boolean;
   created_at: string;
+  last_login_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +302,7 @@ async function postPublic<T>(path: string, body: unknown, errorMessage: string):
   } catch {
     throw new ApiError('Sunucuya bağlanılamadı. Lütfen biraz bekleyip tekrar deneyin.', 0);
   }
-  if (!res.ok) throw new ApiError(await readError(res, errorMessage), res.status);
+  if (!res.ok) throw await toApiError(res, errorMessage);
   return res.json();
 }
 
@@ -295,8 +316,39 @@ export async function register(payload: {
   first_name: string;
   last_name: string;
   terms_accepted: boolean;
-}): Promise<UserProfile> {
+}): Promise<{ message: string; email: string }> {
   return postPublic('/auth/register', payload, 'Kayıt başarısız oldu.');
+}
+
+export async function verifyEmail(token: string): Promise<{ message: string; email: string }> {
+  return postPublic('/auth/verify-email', { token }, 'E-posta doğrulanamadı.');
+}
+
+export async function resendVerification(email: string): Promise<{ message: string }> {
+  return postPublic('/auth/resend-verification', { email }, 'E-posta gönderilemedi.');
+}
+
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  return postPublic('/auth/forgot-password', { email }, 'İstek gönderilemedi.');
+}
+
+export async function resetPassword(token: string, password: string): Promise<{ message: string }> {
+  return postPublic('/auth/reset-password', { token, password }, 'Şifre güncellenemedi.');
+}
+
+export interface AdminLoginResponse {
+  status: 'totp_required' | 'totp_setup_required';
+  mfa_token: string;
+  totp_secret?: string | null;
+  otpauth_uri?: string | null;
+}
+
+export async function adminLogin(email: string, password: string): Promise<AdminLoginResponse> {
+  return postPublic('/auth/admin/login', { email, password }, 'Giriş başarısız oldu.');
+}
+
+export async function adminVerifyTotp(mfaToken: string, code: string): Promise<LoginResponse> {
+  return postPublic('/auth/admin/totp', { mfa_token: mfaToken, code }, 'Doğrulama başarısız oldu.');
 }
 
 export async function fetchMe(): Promise<UserProfile> {
@@ -462,4 +514,8 @@ export async function updateAdminUser(
   data: { tier?: string; is_active?: boolean; is_admin?: boolean }
 ): Promise<{ status: string; user: AdminUserItem }> {
   return requestJson(`/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify(data) }, 'Kullanıcı güncellenemedi');
+}
+
+export async function resetAdminUser2fa(userId: number): Promise<{ status: string; user: AdminUserItem }> {
+  return requestJson(`/admin/users/${userId}/reset-2fa`, { method: 'POST' }, 'İki adımlı doğrulama sıfırlanamadı');
 }

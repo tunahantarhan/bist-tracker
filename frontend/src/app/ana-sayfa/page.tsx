@@ -28,7 +28,9 @@ import { useRouter } from 'next/navigation';
 import StockTicker from '@/components/ui/StockTicker';
 import MacroKpiGrid from '@/components/ui/MacroKpiGrid';
 import RuleConditionText from '@/components/rules/RuleConditionText';
-import { clearSession, getAccessToken, getUserSlug, isAdminSession } from '@/lib/auth';
+import { clearSession, getAccessToken, getUserSlug, isAdminAccount } from '@/lib/auth';
+import { BrandMark } from '@/components/brand/BrandMark';
+import { BRAND } from '@/lib/brand';
 import { useValueFlash } from '@/hooks/useValueFlash';
 import { tfLabel } from '@/lib/timeframes';
 
@@ -102,7 +104,7 @@ const TopPricedRow = ({ item, rank, name, isSelected, onSelect }: TopPricedRowPr
 export default function DashboardPage() {
   const router = useRouter();
   const isAuthenticated = useSyncExternalStore(noopSubscribe, () => !!getAccessToken(), () => false);
-  const isAdmin = useSyncExternalStore(noopSubscribe, isAdminSession, () => false);
+  const isAdmin = useSyncExternalStore(noopSubscribe, isAdminAccount, () => false);
 
   const [watchlist, setWatchlist] = useState<string[]>([]);
   // Pending state drives the UI; the ref is the real mutex (state updates are async, so two quick clicks could both pass a state check)
@@ -381,10 +383,8 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center space-x-4 sm:space-x-6">
               <div className="flex items-center space-x-3 cursor-pointer group" onClick={() => router.push('/')}>
-                <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-[0_0_12px_#2563eb]">
-                  <span className="font-mono text-sm font-black text-white">B</span>
-                </div>
-                <span className="hidden sm:inline font-semibold text-slate-100 tracking-tight">BIST Tracker</span>
+                <BrandMark className="h-8 w-8 shrink-0" />
+                <span className="hidden sm:inline font-semibold text-slate-100 tracking-tight">{BRAND.name}</span>
               </div>
               <div className="hidden sm:block w-64">
                  <StockSearch userWatchlist={watchlist} onToggleWatchlist={handleToggleWatchlist} />
@@ -972,7 +972,7 @@ export default function DashboardPage() {
             hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır.
           </p>
           <p className="text-[10px] text-slate-400 font-mono">
-            © {new Date().getFullYear()} BIST Tracker. Tüm hakları saklıdır.
+            © {new Date().getFullYear()} {BRAND.name}. Tüm hakları saklıdır.
           </p>
         </div>
       </footer>

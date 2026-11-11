@@ -1,6 +1,6 @@
 // Client-side session storage helpers. Tokens live in localStorage (see services/api.ts for refresh).
 
-const SESSION_KEYS = ['access_token', 'refresh_token', 'is_admin', 'user_slug'] as const;
+const SESSION_KEYS = ['access_token', 'refresh_token', 'is_admin', 'admin_session', 'user_slug'] as const;
 
 export interface LoginResponse {
   access_token: string;
@@ -8,6 +8,8 @@ export interface LoginResponse {
   first_name?: string | null;
   last_name?: string | null;
   is_admin?: boolean;
+  /** True only for sessions that passed the admin 2FA step */
+  admin_session?: boolean;
 }
 
 const isBrowser = () => typeof window !== 'undefined';
@@ -20,8 +22,20 @@ export function getRefreshToken(): string | null {
   return isBrowser() ? localStorage.getItem('refresh_token') : null;
 }
 
-export function isAdminSession(): boolean {
+/** The account has the admin role (it may still need the admin sign-in for the panel). */
+export function isAdminAccount(): boolean {
   return isBrowser() && localStorage.getItem('is_admin') === 'true';
+}
+
+/** The current session is admin-scoped (signed in through /admin/giris with 2FA). */
+export function isAdminSession(): boolean {
+  return isBrowser() && localStorage.getItem('admin_session') === 'true';
+}
+
+/** Only same-origin relative paths are accepted as post-login redirects. */
+export function safeNextPath(next: string | null | undefined, fallback: string): string {
+  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return fallback;
+  return next;
 }
 
 export function getUserSlug(): string {
@@ -41,6 +55,7 @@ export function saveSession(data: LoginResponse): void {
   localStorage.setItem('access_token', data.access_token);
   if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
   localStorage.setItem('is_admin', data.is_admin ? 'true' : 'false');
+  localStorage.setItem('admin_session', data.admin_session ? 'true' : 'false');
   if (data.first_name && data.last_name) {
     localStorage.setItem('user_slug', `${toSlugPart(data.first_name)}-${toSlugPart(data.last_name)}`);
   }

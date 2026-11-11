@@ -6,13 +6,23 @@ import { Clock, LogIn } from 'lucide-react';
 import { clearSession, getAccessToken, getRefreshToken, isTokenExpired } from '@/lib/auth';
 import { refreshSession } from '@/services/api';
 
+const PUBLIC_ROUTES = ['/', '/yasal', '/giris', '/sifremi-unuttum', '/sifre-sifirla', '/eposta-dogrula', '/admin/giris'];
+
+/** Admin pages return to the admin sign-in; everything else to the user sign-in with ?next=. */
+function loginPathFor(pathname: string | null): string {
+  if (!pathname) return '/giris';
+  const base = pathname.startsWith('/admin') ? '/admin/giris' : '/giris';
+  return `${base}?next=${encodeURIComponent(pathname)}`;
+}
+
 export default function SessionGuard() {
   const router = useRouter();
   const pathname = usePathname();
   const [expired, setExpired] = useState(false);
   const hadTokenRef = useRef(false);
 
-  const isPublicRoute = pathname === '/' || pathname?.startsWith('/giris');
+  const isPublicRoute = PUBLIC_ROUTES.some((r) => (r === '/' ? pathname === '/' : pathname?.startsWith(r)));
+  const loginPath = loginPathFor(pathname);
 
   const triggerExpirationModal = useCallback(() => {
     if (isPublicRoute) return;
@@ -33,7 +43,7 @@ export default function SessionGuard() {
 
     if (!initialToken && !getRefreshToken()) {
       if (!expired) {
-        router.replace('/giris');
+        router.replace(loginPath);
       }
       return;
     }
@@ -68,12 +78,12 @@ export default function SessionGuard() {
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [pathname, isPublicRoute, expired, router, triggerExpirationModal]);
+  }, [pathname, isPublicRoute, loginPath, expired, router, triggerExpirationModal]);
 
   const handleRedirectToAuth = () => {
     clearSession();
     setExpired(false);
-    router.push('/giris');
+    router.push(loginPath);
   };
 
   if (!expired || isPublicRoute) return null;
