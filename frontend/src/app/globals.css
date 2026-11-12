@@ -202,3 +202,15 @@
     stroke-dasharray: none;
   }
 }
+
+/* In-page anchor links glide; route changes stay instant (data-scroll-behavior on <html>) */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Illustrations wrapped in <PlayOnView> wait until they scroll into view */
+.play-on-view:not([data-in-view='true']) :is(.animate-draw-line, .animate-fade-up, .animate-breakout-pulse) {
+  animation-play-state: paused;
+}

@@ -23,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="tr" className={jetbrainsMono.variable}>
+    <html lang="tr" className={jetbrainsMono.variable} data-scroll-behavior="smooth">
       <body className={`${inter.className} antialiased bg-slate-950 text-slate-50 min-h-screen`}>
         <SessionGuard />
         {children}

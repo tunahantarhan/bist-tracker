@@ -3,7 +3,6 @@ import {
   ArrowRight,
   BellRing,
   Check,
-  ChevronDown,
   Database,
   Filter,
   Gauge,
@@ -17,6 +16,8 @@ import { SiteFooter, SiteHeader } from '@/components/landing/SiteChrome';
 import LiveScanPanel from '@/components/landing/LiveScanPanel';
 import ScoreAnatomy from '@/components/landing/ScoreAnatomy';
 import BreakoutIllustration from '@/components/auth/BreakoutIllustration';
+import FaqAccordion from '@/components/landing/FaqAccordion';
+import PlayOnView from '@/components/landing/PlayOnView';
 
 const STEPS = [
   {
@@ -212,9 +213,9 @@ export default function LandingPage() {
                   ))}
                 </ul>
               </div>
-              <div className="rounded-xl border border-slate-800/80 bg-[#0b0e14] p-5 sm:p-6">
+              <PlayOnView className="rounded-xl border border-slate-800/80 bg-[#0b0e14] p-5 sm:p-6">
                 <BreakoutIllustration />
-              </div>
+              </PlayOnView>
             </div>
           </div>
         </section>
@@ -295,17 +296,7 @@ export default function LandingPage() {
                 sayfasına bakabilirsiniz.
               </p>
             </div>
-            <div className="divide-y divide-slate-800 border-y border-slate-800">
-              {FAQ.map(({ q, a }) => (
-                <details key={q} className="group py-1">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-4 text-left font-medium text-slate-200 transition-colors hover:text-white [&::-webkit-details-marker]:hidden">
-                    {q}
-                    <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
-                  </summary>
-                  <p className="pb-5 pr-8 text-sm leading-relaxed text-slate-400">{a}</p>
-                </details>
-              ))}
-            </div>
+            <FaqAccordion items={FAQ} />
           </div>
         </section>
 
