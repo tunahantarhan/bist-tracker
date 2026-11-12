@@ -265,7 +265,7 @@ function AdminConsole() {
       counts={{ rules: rules.length, users: usersLoaded ? users.length : stats.total_users, stocks: savedUniverse.length || stats.active_stocks }}
       title={heading.title}
       subtitle={heading.subtitle}
-      actions={section === 'rules' ? <CreateRuleDialog onRuleCreated={() => { afterRuleChange(); toast('Kural kaydedildi.'); }} /> : undefined}
+      actions={section === 'rules' ? <CreateRuleDialog existingRules={rules} onRuleCreated={() => { afterRuleChange(); toast('Kural kaydedildi.'); }} /> : undefined}
     >
       {/* Shared edit dialog for the primary filter and scoring rules */}
       <CreateRuleDialog
@@ -274,6 +274,7 @@ function AdminConsole() {
           if (!open) setEditingRule(null);
         }}
         editingRule={editingRule}
+        existingRules={rules}
         onRuleCreated={() => {
           afterRuleChange();
           toast('Kural güncellendi.');
