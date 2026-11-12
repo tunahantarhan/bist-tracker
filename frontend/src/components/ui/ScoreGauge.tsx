@@ -135,7 +135,7 @@ export default function ScoreGauge({
       {/* Score */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span
-          className={`font-mono font-bold tracking-tighter ${config.fontSize} transition-colors duration-300`}
+          className={`font-data font-bold tracking-tighter ${config.fontSize} transition-colors duration-300`}
           style={{ color: tier.color }}
         >
           {formattedScore}

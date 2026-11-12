@@ -3,67 +3,13 @@
 import { useEffect, useState } from 'react';
 import { fetchMarketOverview, type MarketOverviewResponse } from '@/services/api';
 import { getScoreTier } from '@/components/ui/ScoreGauge';
+import { SCORE_BANDS as BANDS, bandMidpoint, formatIstanbulTime, isBistOpen, summarizeScan, type ScanSummary } from '@/lib/scanSummary';
 import { tfLabel } from '@/lib/timeframes';
 
-// Score bands match the gauge tiers used across the app
-const BANDS = [
-  { from: 0, to: 0, label: '0' },
-  { from: 0, to: 25, label: '1–25' },
-  { from: 25, to: 50, label: '26–50' },
-  { from: 50, to: 75, label: '51–75' },
-  { from: 75, to: 100, label: '76–100' },
-];
-
-function bandIndex(score: number): number {
-  if (score <= 0) return 0;
-  if (score <= 25) return 1;
-  if (score <= 50) return 2;
-  if (score <= 75) return 3;
-  return 4;
-}
-
-/** BIST continuous session, Istanbul time: weekdays 10:00–18:10. Mirrors backend core/market_hours.py. */
-function isBistOpen(at: Date): boolean {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Istanbul',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(at);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  if (get('weekday') === 'Sat' || get('weekday') === 'Sun') return false;
-  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
-  return minutes >= 10 * 60 && minutes <= 18 * 60 + 10;
-}
-
-type Summary = {
-  scanned: number;
-  passed: number;
-  average: number;
-  bands: number[];
-  timeframe: string;
-  scannedAt: Date | null;
-  open: boolean;
-};
+type Summary = ScanSummary & { open: boolean };
 
 function summarize(data: MarketOverviewResponse): Summary {
-  const items = data.items ?? [];
-  const bands = [0, 0, 0, 0, 0];
-  let total = 0;
-  for (const item of items) {
-    bands[bandIndex(item.score)]++;
-    total += item.score;
-  }
-  return {
-    scanned: items.length,
-    passed: items.filter((i) => i.primary_filter_passed).length,
-    average: items.length ? total / items.length : 0,
-    bands,
-    timeframe: data.primary_filter_timeframe ?? '4h',
-    scannedAt: data.generated_at ? new Date(data.generated_at * 1000) : null,
-    open: isBistOpen(new Date()),
-  };
+  return { ...summarizeScan(data), open: isBistOpen() };
 }
 
 /**
@@ -101,7 +47,7 @@ export default function LiveScanPanel() {
           {summary
             ? `${summary.open ? 'Seans açık' : 'Seans kapalı'}${
                 summary.scannedAt
-                  ? ` · ${summary.scannedAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })}`
+                  ? ` · ${formatIstanbulTime(summary.scannedAt)}`
                   : ''
               }`
             : failed
@@ -137,7 +83,7 @@ export default function LiveScanPanel() {
         <div className="mt-4 grid h-32 grid-cols-5 items-end gap-2.5" role="img" aria-label="Taranan hisselerin skor aralıklarına göre dağılımı">
           {BANDS.map((band, i) => {
             const count = summary?.bands[i] ?? 0;
-            const tier = getScoreTier(band.to === 0 ? 0 : (band.from + band.to) / 2);
+            const tier = getScoreTier(bandMidpoint(i));
             const height = summary ? Math.max(4, (count / maxBand) * 100) : 18 + i * 8;
             return (
               <div key={band.label} className="flex h-full flex-col items-center justify-end gap-1.5">
