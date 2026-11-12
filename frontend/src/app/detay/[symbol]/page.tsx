@@ -1,99 +1,99 @@
 'use client';
 
-import { BRAND } from '@/lib/brand';
-import { useEffect, useState, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { 
-  ArrowLeft, CheckCircle2, XCircle, 
-  TrendingUp, TrendingDown, ShieldCheck, ChevronRight,
-  PieChart
-} from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
+import { ArrowLeft, Bookmark, BookmarkCheck, ChevronRight, Filter, LayoutDashboard, Loader2, SearchX, ShieldCheck } from 'lucide-react';
 import ChartWrapper from '@/components/charts/ChartWrapper';
 import StockAlertDropdown from '@/components/alerts/StockAlertDropdown';
-import ScoreGauge from '@/components/ui/ScoreGauge';
-import { fetchMarketData, MarketData, PeriodicReturnItem } from '@/services/api';
-import RuleConditionText from '@/components/rules/RuleConditionText';
+import ScoreGauge, { getScoreTier } from '@/components/ui/ScoreGauge';
+import DashboardHeader from '@/components/dashboard/DashboardHeader';
+import AppFooter from '@/components/dashboard/AppFooter';
+import RuleRow from '@/components/dashboard/RuleRow';
+import { Segmented } from '@/components/dashboard/InstrumentPanel';
+import { Eyebrow, Panel, PanelHeader, formatPct, formatPrice } from '@/components/dashboard/Panel';
+import { FundamentalsPanel, ReturnsStrip, RsiSnapshot, ScoreComposition, YearRange } from '@/components/detail/DetailBlocks';
+import { addToWatchlist, fetchMarketData, fetchWatchlist, removeFromWatchlist, type MarketData } from '@/services/api';
+import { useValueFlash } from '@/hooks/useValueFlash';
 import { tfLabel } from '@/lib/timeframes';
 
-type StockDetailData = MarketData;
-
-const BIST_COMPANY_NAMES: Record<string, string> = {
-  KORDS: "Kordsa Teknik Tekstil A.Ş.",
-  AYDEM: "Aydem Yenilenebilir Enerji A.Ş.",
-  VESTL: "Vestel Elektronik Sanayi ve Ticaret A.Ş.",
-  THYAO: "Türk Hava Yolları A.O.",
-  ASELS: "Aselsan Elektronik Sanayi ve Ticaret A.Ş.",
-  GARAN: "Türkiye Garanti Bankası A.Ş.",
-  AKBNK: "Akbank T.A.Ş.",
-  YKBNK: "Yapı ve Kredi Bankası A.Ş.",
-  ISCTR: "Türkiye İş Bankası A.Ş. (C)",
-  KCHOL: "Koç Holding A.Ş.",
-  SAHOL: "Hacı Ömer Sabancı Holding A.Ş.",
-  TUPRS: "Tüpraş Türkiye Petrol Rafinerileri A.Ş.",
-  EREGL: "Ereğli Demir ve Çelik Fabrikaları T.A.Ş.",
-  SISE: "Türkiye Şişe ve Cam Fabrikaları A.Ş.",
-  BIMAS: "BİM Birleşik Mağazalar A.Ş.",
-  FROTO: "Ford Otomotiv Sanayi A.Ş.",
-  TOASO: "Tofaş Türk Otomobil Fabrikası A.Ş.",
-  TTKOM: "Türk Telekomünikasyon A.Ş.",
-  TCELL: "Turkcell İletişim Hizmetleri A.Ş.",
-  PETKM: "Petkim Petrokimya Holding A.Ş.",
-  PGSUS: "Pegasus Hava Taşımacılığı A.Ş.",
-  KOZAL: "Koza Altın İşletmeleri A.Ş.",
-  EKGYO: "Emlak Konut Gayrimenkul Yatırım Ortaklığı A.Ş.",
-  ASTOR: "Astor Enerji A.Ş.",
-  KONTR: "Kontrolmatik Teknoloji Enerji ve Mühendislik A.Ş.",
-  HEKTS: "Hektaş Ticaret T.A.Ş.",
-  SASA: "SASA Polyester Sanayi A.Ş.",
-  MIATK: "Mia Teknoloji A.Ş.",
-  RTALB: "RTA Laboratuvarları Biyolojik Ürünler İlaç San. A.Ş.",
-  SKBNK: "Şekerbank T.A.Ş.",
-  ODAS: "Odaş Elektrik Üretim Sanayi Ticaret A.Ş.",
-  ALARK: "Alarko Holding A.Ş.",
-  TATGD: "Tat Gıda Sanayi A.Ş.",
-  ULKER: "Ülker Bisküvi Sanayi A.Ş.",
-  GOODY: "Goodyear Lastikleri T.A.Ş.",
-  KARSN: "Karsan Otomotiv Sanayii ve Ticaret A.Ş.",
-};
-
-const TIMEFRAME_OPTIONS = [
-  { label: '5 DK', value: '5m', period: '1mo' },
-  { label: '15 DK', value: '15m', period: '1mo' },
-  { label: '1 S', value: '1h', period: '3mo' },
-  { label: '4 S', value: '4h', period: '6mo' },
-  { label: '1 G', value: '1d', period: '1y' },
+// Each candle size comes with a sensible history length
+const TIMEFRAMES = [
+  { value: '5m', label: '5Dk', period: '1mo' },
+  { value: '15m', label: '15Dk', period: '1mo' },
+  { value: '1h', label: '1S', period: '3mo' },
+  { value: '4h', label: '4S', period: '6mo' },
+  { value: '1d', label: '1G', period: '1y' },
 ];
+
+const CHART_HEIGHT = 420;
+
+function Skeleton() {
+  return (
+    <div className="space-y-5">
+      <div className="h-[220px] animate-pulse rounded-2xl border border-slate-800/80 bg-[#12161f]" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} className="h-[92px] animate-pulse rounded-2xl border border-slate-800/80 bg-[#12161f]" />
+        ))}
+      </div>
+      <div className="flex h-[560px] items-center justify-center gap-2 rounded-2xl border border-slate-800/80 bg-[#12161f] font-data text-xs text-slate-600">
+        <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> Veriler hazırlanıyor
+      </div>
+    </div>
+  );
+}
+
+function NotFound({ symbol }: { symbol: string }) {
+  return (
+    <Panel>
+      <div className="flex min-h-[460px] flex-col items-center justify-center p-8 text-center">
+        <span className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-rose-500/25 bg-rose-500/10">
+          <SearchX className="h-7 w-7 text-rose-400" />
+        </span>
+        <Eyebrow className="text-slate-500">{symbol}</Eyebrow>
+        <h1 className="mt-2 text-2xl font-bold text-slate-100">Bu sembol için veri bulunamadı</h1>
+        <p className="mt-2 max-w-md text-sm leading-relaxed text-slate-400">
+          Kod hatalı olabilir ya da hisse taranan evrende değildir. Üstteki aramadan başka bir hisse seçebilirsiniz.
+        </p>
+        <Link
+          href="/ana-sayfa"
+          className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500"
+        >
+          <LayoutDashboard className="h-4 w-4" /> Panele dön
+        </Link>
+      </div>
+    </Panel>
+  );
+}
 
 export default function StockDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const symbol = (params?.symbol as string)?.toUpperCase() || '';
+  const symbol = ((params?.symbol as string) || '').toUpperCase();
 
-  const [timeframe, setTimeframe] = useState<string>('15m');
-  const [data, setData] = useState<StockDetailData | null>(null);
+  const [timeframe, setTimeframe] = useState('1h');
+  const [rawData, setData] = useState<MarketData | null>(null);
+  // Ignore a payload left over from the previously viewed symbol
+  const data = rawData && rawData.symbol === symbol ? rawData : null;
+  // `loading` lasts until the first response for the current symbol + timeframe
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadedKey !== `${symbol}_${timeframe}`;
 
-  const handleSmartBack = () => {
-    if (typeof window !== 'undefined' && window.history.length > 1 && document.referrer.includes(window.location.host)) {
-      router.back();
-    } else {
-      router.push('/ana-sayfa');
-    }
-  };
-
-  const companyTitle = useMemo(() => {
-    if (data?.name && data.name !== symbol) return data.name;
-    if (BIST_COMPANY_NAMES[symbol]) return BIST_COMPANY_NAMES[symbol];
-    return `${symbol} Pay Piyasası`;
-  }, [data, symbol]);
-
-  // Fetch on timeframe change and keep refreshing every 15s; `loading` lasts until the first response for this timeframe
-  const [loadedTimeframe, setLoadedTimeframe] = useState<string | null>(null);
-  const loading = loadedTimeframe !== timeframe;
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchPending, setWatchPending] = useState(false);
+  const watchInFlight = useRef(false);
 
   useEffect(() => {
+    fetchWatchlist()
+      .then((items) => setWatchlist(items.map((i) => i.symbol)))
+      .catch(() => {});
+  }, []);
+
+  // Fetch on timeframe change and keep refreshing every 15s
+  useEffect(() => {
     if (!symbol) return;
-    const option = TIMEFRAME_OPTIONS.find((opt) => opt.value === timeframe) || TIMEFRAME_OPTIONS[1];
+    const option = TIMEFRAMES.find((t) => t.value === timeframe) ?? TIMEFRAMES[2];
     let cancelled = false;
 
     const load = async () => {
@@ -104,7 +104,7 @@ export default function StockDetailPage() {
         console.error('Hisse detay yükleme hatası:', err);
         if (!cancelled) setData(null);
       } finally {
-        if (!cancelled) setLoadedTimeframe(timeframe);
+        if (!cancelled) setLoadedKey(`${symbol}_${timeframe}`);
       }
     };
 
@@ -116,308 +116,235 @@ export default function StockDetailPage() {
     };
   }, [symbol, timeframe]);
 
-  const periodicReturns: PeriodicReturnItem[] = data?.periodic_returns ?? [];
+  const toggleWatch = useCallback(
+    async (target: string, isAdded: boolean) => {
+      if (watchInFlight.current) return;
+      watchInFlight.current = true;
+      setWatchPending(true);
+      try {
+        if (isAdded) {
+          await removeFromWatchlist(target);
+          setWatchlist((prev) => prev.filter((s) => s !== target));
+        } else {
+          await addToWatchlist(target);
+          setWatchlist((prev) => (prev.includes(target) ? prev : [...prev, target]));
+        }
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'İşlem başarısız oldu');
+      } finally {
+        watchInFlight.current = false;
+        setWatchPending(false);
+      }
+    },
+    []
+  );
 
-  const formatLargeCurrency = (val?: number | null) => {
-    if (!val || val === 0) return '---';
-    if (val >= 1_000_000_000) return `₺${(val / 1_000_000_000).toFixed(2)} Mr`;
-    if (val >= 1_000_000) return `₺${(val / 1_000_000).toFixed(2)} Mn`;
-    return `₺${val.toLocaleString('tr-TR')}`;
+  const handleBack = () => {
+    if (window.history.length > 1 && document.referrer.includes(window.location.host)) router.back();
+    else router.push('/ana-sayfa');
   };
 
-  const hasValidData = data && data.candles && data.candles.length > 0;
+  const priceFlash = useValueFlash(symbol, data?.current_price);
+  const hasData = !!data && data.candles?.length > 0;
+  const rules = data?.rules_breakdown ?? [];
+  const metCount = rules.filter((r) => r.is_met).length;
+  const score = data?.score ?? 0;
+  const tier = getScoreTier(score);
+  const watched = watchlist.includes(symbol);
+  const up = (data?.change_pct ?? 0) >= 0;
+  const primaryTf = data?.primary_filter_timeframe ?? '4h';
 
   return (
-    <div className="min-h-screen bg-[#0b0e14] text-slate-100 flex flex-col">
-      {/* Top Navigation Bar */}
-      <header className="px-4 sm:px-8 py-3.5 border-b border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between">
-        <div className="flex items-center space-x-3 sm:space-x-4">
+    <div className="flex min-h-screen flex-col overflow-x-clip bg-[#0b0e14] text-slate-200">
+      <DashboardHeader watchlist={watchlist} onToggleWatchlist={toggleWatch} onSelect={(s) => router.push(`/detay/${s}`)} />
+
+      <main className="mx-auto w-full max-w-7xl flex-1 space-y-5 px-4 py-5 md:px-6">
+        {/* Breadcrumb */}
+        <nav className="flex items-center gap-3" aria-label="Konum">
           <button
             type="button"
-            onClick={handleSmartBack}
-            className="p-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
-            title="Geri Dön"
+            onClick={handleBack}
+            title="Geri dön"
+            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-400 transition-colors hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
-          <div className="flex items-center space-x-2">
-            <Link href="/ana-sayfa" className="text-xs font-mono text-slate-400 hover:text-blue-400 transition-colors">
-              Panel
-            </Link>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
-            <span className="font-mono font-bold text-sm text-slate-100">{symbol}</span>
-          </div>
-        </div>
+          <Link href="/ana-sayfa" className="font-data text-xs text-slate-500 transition-colors hover:text-blue-300">
+            Panel
+          </Link>
+          <ChevronRight className="h-3.5 w-3.5 text-slate-700" />
+          <span className="font-data text-xs text-slate-200">{symbol}</span>
+        </nav>
 
-        <StockAlertDropdown symbol={symbol} />
-      </header>
-
-      {/* Main Content Workspace */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 space-y-6">
-        
-        {/* Loading State */}
-        {loading && (
-          <div className="min-h-[460px] flex items-center justify-center border border-dashed border-slate-800/80 rounded-2xl bg-[#12161f]/30 text-xs font-mono text-slate-400">
-            {symbol} detay verileri yükleniyor...
-          </div>
-        )}
-
-        {/* 404 Empty State for Unknown or Inactive Symbol */}
-        {!loading && !hasValidData && (
-          <div className="min-h-[460px] flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/80 rounded-2xl bg-[#12161f]/30">
-            <div className="h-14 w-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-rose-400 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
-              <XCircle className="h-7 w-7" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-200 tracking-tight">
-              {symbol} Sembolü Bulunamadı
-            </h3>
-            <p className="text-xs text-slate-400 mt-1.5 max-w-sm leading-relaxed">
-              Borsa İstanbul evreninde bu koda ait aktif piyasa verisi veya kural karnesi tespit edilemedi.
-            </p>
-            <button
-              onClick={() => router.push('/ana-sayfa')}
-              className="mt-5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-colors cursor-pointer"
-            >
-              Ana Panele Geri Dön
-            </button>
-          </div>
-        )}
-
-        {/* Full Details Content (Rendered when valid data exists) */}
-        {!loading && hasValidData && (
+        {loading && !data ? (
+          <Skeleton />
+        ) : !hasData ? (
+          <NotFound symbol={symbol} />
+        ) : (
           <>
-            {/* Header Summary Hero Card */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#12161f]/60 border border-slate-800/80 shadow-xl backdrop-blur-sm">
-              <div className="flex items-center space-x-4">
-                <div className="h-12 w-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center font-mono font-bold text-blue-400 text-base shrink-0">
-                  {symbol.slice(0, 3)}
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2.5">
-                    <h1 className="text-2xl font-black font-mono tracking-tight text-white">{symbol}</h1>
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold ${
-                      data.primary_filter_passed 
-                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
-                        : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                    }`}>
-                      {data.primary_filter_passed ? 'FİLTRE ONAYLANDI' : 'FİLTRE BEKLENİYOR'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1 font-medium truncate max-w-[280px] sm:max-w-md">
-                    {companyTitle}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-6 shrink-0">
-                <div className="text-right">
-                  <div className="text-2xl font-black font-mono text-white">
-                    ₺{data.current_price.toFixed(2)}
-                  </div>
-                  <div className={`text-xs font-mono font-semibold flex items-center justify-end space-x-1 ${
-                    data.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}>
-                    {data.change_pct >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                    <span>{data.change_pct >= 0 ? '+' : ''}{data.change_pct.toFixed(2)}%</span>
-                  </div>
-                </div>
-
-                <div className="h-10 w-px bg-slate-800 hidden sm:block" />
-
-                {/* Circular Speedometer Score Gauge */}
-                <div className="flex items-center space-x-3">
-                  <ScoreGauge score={data.score} size="md" showDecimals={true} />
-                  <div className="hidden sm:flex flex-col text-left">
-                    <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
-                      Kural Skoru
-                    </span>
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      / 100 Puan
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 1st SECTION: Periodic Returns Strip (1H, 1A, 3A, 6A, 1Y) */}
-            {periodicReturns.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 select-none">
-                {periodicReturns.map((item) => {
-                  const isPositive = item.change_pct >= 0;
-                  return (
-                    <div
-                      key={item.period}
-                      className="flex flex-col p-3 rounded-xl border border-slate-800/80 bg-[#12161f]/40 hover:border-slate-700/80 transition-all"
-                    >
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
-                        <span>{item.label}</span>
-                        <span className="text-[10px] font-mono text-slate-500">{item.period}</span>
-                      </div>
-                      <div className="mt-1 flex items-center space-x-1 font-mono text-base font-bold">
-                        <span className={isPositive ? 'text-emerald-400' : 'text-rose-400'}>
-                          {isPositive ? '+' : ''}{item.change_pct.toFixed(2)}%
-                        </span>
-                        {isPositive ? (
-                          <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-                        ) : (
-                          <TrendingDown className="h-3.5 w-3.5 text-rose-400" />
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Timeframe Selection Bar */}
-            <div className="flex items-center space-x-1 bg-[#12161f] p-1 rounded-xl border border-slate-800/80 w-fit">
-              {TIMEFRAME_OPTIONS.map((opt) => {
-                const isSelected = timeframe === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setTimeframe(opt.value)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Interactive Chart Container */}
-            <div className="p-4 rounded-2xl bg-[#12161f]/60 border border-slate-800/80">
-              <ChartWrapper
-                candles={data.candles}
-                indicators={data.indicators}
-                rsiPane={data.rsi_pane}
-                height={380}
+            {/* Hero */}
+            <Panel className="relative">
+              <div
+                className="pointer-events-none absolute inset-0 opacity-50"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(to right, rgb(30 41 59 / 0.45) 1px, transparent 1px), linear-gradient(to bottom, rgb(30 41 59 / 0.45) 1px, transparent 1px)',
+                  backgroundSize: '40px 40px',
+                  maskImage: 'radial-gradient(ellipse 60% 90% at 0% 0%, black 20%, transparent 70%)',
+                  WebkitMaskImage: 'radial-gradient(ellipse 60% 90% at 0% 0%, black 20%, transparent 70%)',
+                }}
               />
-            </div>
-
-            {/* 2nd SECTION: Key Fundamental Ratios Grid */}
-            <div className="space-y-3">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
-                <PieChart className="h-4 w-4 text-amber-400" />
-                <span>Temel Borsa Rasyoları & Finansal Göstergeler</span>
-              </h2>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {/* Market Value */}
-                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
-                  <span className="text-[11px] font-medium text-slate-400">Piyasa Değeri</span>
-                  <div className="text-base sm:text-lg font-bold font-mono text-slate-100 mt-1">
-                    {formatLargeCurrency(data.fundamentals?.market_cap)}
+              <div className="relative grid gap-6 p-5 sm:p-6 lg:grid-cols-[1fr_auto] lg:items-start">
+                <div className="min-w-0 space-y-4">
+                  <Eyebrow className="text-blue-400">Borsa İstanbul · Hisse detayı</Eyebrow>
+                  <div>
+                    <h1 className="font-data text-4xl font-bold tracking-tight text-white sm:text-5xl">{symbol}</h1>
+                    <p className="mt-1.5 text-sm text-slate-400">{data!.name && data!.name !== symbol ? data!.name : `${symbol} pay senedi`}</p>
                   </div>
-                </div>
-
-                {/* Free-Float Ratio */}
-                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
-                  <span className="text-[11px] font-medium text-slate-400">Fiili Dolaşım (Halka Açıklık)</span>
-                  <div className="text-base sm:text-lg font-bold font-mono text-cyan-400 mt-1">
-                    {data.fundamentals?.free_float_pct !== undefined && data.fundamentals?.free_float_pct !== null
-                      ? `%${data.fundamentals.free_float_pct.toFixed(2)}`
-                      : '---'}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {data!.has_primary_filter && (
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-data text-[10px] uppercase tracking-wider ${
+                          data!.primary_filter_passed
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                            : 'border-slate-700 bg-slate-800/50 text-slate-400'
+                        }`}
+                      >
+                        <Filter className="h-3 w-3" />
+                        {data!.primary_filter_passed ? 'Ana filtre geçti' : 'Ana filtre bekleniyor'} · {tfLabel(primaryTf)}
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/50 px-2 py-1 font-data text-[10px] uppercase tracking-wider text-slate-400">
+                      <ShieldCheck className="h-3 w-3" /> {metCount}/{rules.length} kural
+                    </span>
                   </div>
-                </div>
-
-                {/* P/E (F/K) Ratio */}
-                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
-                  <span className="text-[11px] font-medium text-slate-400">F/K (Fiyat / Kazanç)</span>
-                  <div className="text-base sm:text-lg font-bold font-mono text-amber-300 mt-1">
-                    {data.fundamentals?.pe_ratio !== undefined && data.fundamentals?.pe_ratio !== null
-                      ? data.fundamentals.pe_ratio.toFixed(2)
-                      : '---'}
-                  </div>
-                </div>
-
-                {/* P/B (PD/DD) Ratio */}
-                <div className="p-4 rounded-xl border border-slate-800/80 bg-[#12161f]/50 flex flex-col justify-between">
-                  <span className="text-[11px] font-medium text-slate-400">PD / DD (Piyasa / Defter Değeri)</span>
-                  <div className="text-base sm:text-lg font-bold font-mono text-purple-300 mt-1">
-                    {data.fundamentals?.pb_ratio !== undefined && data.fundamentals?.pb_ratio !== null
-                      ? data.fundamentals.pb_ratio.toFixed(2)
-                      : '---'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 3rd SECTION: Rule Analysis Report */}
-            <div className="space-y-3">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
-                <ShieldCheck className="h-4 w-4 text-blue-400" />
-                <span>Kural Analiz Karnesi ({symbol})</span>
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {data.rules_breakdown?.map((rule) => {
-                  const isMet = rule.is_met;
-                  const scoreVal = isMet ? (rule.earned_score ?? rule.score_impact ?? 0) : 0;
-
-                  return (
-                    <div
-                      key={rule.id}
-                      className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
-                        isMet
-                          ? 'bg-emerald-950/15 border-emerald-500/30'
-                          : 'bg-[#12161f]/40 border-slate-800/80'
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={watchPending}
+                      onClick={() => toggleWatch(symbol, watched)}
+                      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        watched
+                          ? 'border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20'
+                          : 'border-slate-700 bg-[#161b26] text-slate-300 hover:bg-slate-800 hover:text-white'
                       }`}
                     >
-                      <div className="space-y-1.5 pr-3 min-w-0">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs font-semibold text-slate-200 truncate">{rule.name}</span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
-                            {tfLabel(rule.timeframe)}
-                          </span>
-                        </div>
-                        <div className="text-[11px] font-mono text-slate-400">
-                          <RuleConditionText rule={rule} />
-                        </div>
-                      </div>
+                      {watchPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : watched ? (
+                        <BookmarkCheck className="h-3.5 w-3.5" />
+                      ) : (
+                        <Bookmark className="h-3.5 w-3.5" />
+                      )}
+                      {watched ? 'Takipte' : 'Takibe al'}
+                    </button>
+                    <StockAlertDropdown symbol={symbol} />
+                    <Link
+                      href={`/ana-sayfa?sembol=${symbol}`}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-[#161b26] px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+                    >
+                      <LayoutDashboard className="h-3.5 w-3.5" /> Panelde aç
+                    </Link>
+                  </div>
+                </div>
 
-                      <div className="flex items-center space-x-2 shrink-0 ml-2">
-                        <span className={`text-xs font-mono font-bold ${isMet ? 'text-emerald-400' : 'text-slate-500'}`}>
-                          {isMet ? `+${scoreVal}p` : '0.00'}
-                        </span>
-                        {isMet ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <XCircle className="h-4 w-4 text-slate-600" />
-                        )}
-                      </div>
+                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-stretch">
+                  <div
+                    className={`flex min-w-0 flex-col justify-center rounded-xl border border-slate-800/80 px-5 py-4 transition-colors duration-500 sm:min-w-[190px] ${
+                      priceFlash === 'up' ? 'bg-emerald-500/10' : priceFlash === 'down' ? 'bg-rose-500/10' : 'bg-[#0d1118]'
+                    }`}
+                  >
+                    <Eyebrow className="text-slate-500">Son fiyat</Eyebrow>
+                    <span className="mt-2 font-data text-3xl font-semibold text-slate-50">₺{formatPrice(data!.current_price)}</span>
+                    <span className={`mt-1 font-data text-xs ${up ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {up ? '▲' : '▼'} {formatPct(data!.change_pct)} <span className="text-slate-600">bugün</span>
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-4 rounded-xl border border-slate-800/80 bg-[#0d1118] px-4 py-3">
+                    <ScoreGauge score={score} size="lg" />
+                    <div className="hidden min-w-0 sm:block">
+                      <Eyebrow className="text-slate-500">Güven skoru</Eyebrow>
+                      <p className="mt-1.5 font-data text-sm font-semibold" style={{ color: tier.color }}>
+                        {tier.label}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">100 üzerinden</p>
                     </div>
-                  );
-                })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative grid gap-6 border-t border-slate-800/80 p-5 sm:p-6 md:grid-cols-2">
+                <YearRange low={data!.fundamentals?.year_low} high={data!.fundamentals?.year_high} price={data!.current_price} />
+                <div className="space-y-2">
+                  <Eyebrow className="text-slate-500">Skor bileşimi</Eyebrow>
+                  <ScoreComposition rules={rules} />
+                </div>
+              </div>
+            </Panel>
+
+            <ReturnsStrip items={data!.periodic_returns ?? []} />
+
+            {/* Chart */}
+            <Panel>
+              <div className="flex flex-col gap-3 border-b border-slate-800/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                <div>
+                  <Eyebrow className="text-slate-300">Fiyat ve RSI</Eyebrow>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Mum boyutu değişince geçmiş uzunluğu otomatik ayarlanır</p>
+                </div>
+                <div className="sm:w-80">
+                  <Segmented label="Mum" options={TIMEFRAMES} value={timeframe} onChange={setTimeframe} />
+                </div>
+              </div>
+              <div className="px-2 pb-2 pt-3 sm:px-3">
+                {loading ? (
+                  <div className="flex items-center justify-center gap-2 font-data text-xs text-slate-600" style={{ height: CHART_HEIGHT }}>
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> Grafik hazırlanıyor
+                  </div>
+                ) : (
+                  <ChartWrapper
+                    key={`${symbol}-${timeframe}`}
+                    candles={data!.candles}
+                    indicators={data!.indicators}
+                    rsiPane={data!.rsi_pane}
+                    height={CHART_HEIGHT}
+                  />
+                )}
+              </div>
+            </Panel>
+
+            <div className="grid items-start gap-5 lg:grid-cols-[1.5fr_1fr]">
+              <Panel>
+                <PanelHeader
+                  icon={ShieldCheck}
+                  title="Kural karnesi"
+                  subtitle="Her kural kendi zaman diliminde değerlendirilir"
+                  accent="emerald"
+                  right={<span className="font-data text-xs text-slate-400">{metCount}/{rules.length}</span>}
+                />
+                {rules.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-xs text-slate-500">Aktif kural bulunmuyor.</p>
+                ) : (
+                  <ul className="space-y-2 p-4">
+                    {rules.map((rule) => (
+                      <RuleRow key={rule.id} rule={rule} />
+                    ))}
+                  </ul>
+                )}
+                <p className="border-t border-slate-800/80 px-4 py-3 text-[11px] leading-relaxed text-slate-500">
+                  Skor, sağlanan kuralların ağırlıklarının toplamıdır ve grafikte seçilen mum boyutundan bağımsızdır.
+                </p>
+              </Panel>
+
+              <div className="space-y-5">
+                <RsiSnapshot data={data!} interval={timeframe} />
+                <FundamentalsPanel data={data!} />
               </div>
             </div>
           </>
         )}
       </main>
 
-      {/* Legal Disclaimer Footer */}
-      <footer className="mt-12 border-t border-slate-800/60 bg-[#080a0f] px-6 py-6 text-center select-none">
-        <div className="max-w-5xl mx-auto flex flex-col items-center space-y-2">
-          <div className="flex items-center space-x-2 text-slate-400 text-xs font-semibold">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-            <span>Yasal Uyarı & Bilgilendirme</span>
-          </div>
-          <p className="text-[11px] leading-relaxed text-slate-400">
-            Burada yer alan yatırım bilgi, yorum ve tavsiyeleri yatırım danışmanlığı kapsamında değildir. 
-            Platformumuzda sunulan tüm veriler, göstergeler ve algoritmik skorlar kullanıcı tarafından belirlenen 
-            veya sisteme tanımlanmış matematiksel teknik analiz koşullarının izlenmesi amacıyla üretilmekte olup 
-            hiçbir şekilde alım-satım tavsiyesi niteliği taşımamaktadır.
-          </p>
-          <p className="text-[10px] text-slate-400 font-mono">
-            © {new Date().getFullYear()} {BRAND.name}. Tüm hakları saklıdır.
-          </p>
-        </div>
-      </footer>
+      <AppFooter />
     </div>
   );
 }
