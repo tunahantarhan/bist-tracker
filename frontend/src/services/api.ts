@@ -378,6 +378,11 @@ export async function deleteRule(id: number): Promise<{ detail: string }> {
   return requestJson(`/rules/${id}`, { method: 'DELETE' }, 'Kural silinemedi');
 }
 
+/** Adds the default rule suite; existing rule names and a second primary filter are skipped. */
+export async function seedDefaultRules(): Promise<Rule[]> {
+  return requestJson('/rules/seed-defaults', { method: 'POST' }, 'Varsayılan kurallar eklenemedi');
+}
+
 // ---------------------------------------------------------------------------
 // Market
 // ---------------------------------------------------------------------------
