@@ -51,14 +51,19 @@ function toSlugPart(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+/** Builds the profile URL slug ("ad-soyad") and stores it for the header menu. */
+export function storeUserName(firstName: string, lastName: string): string {
+  const slug = `${toSlugPart(firstName)}-${toSlugPart(lastName)}`;
+  if (isBrowser()) localStorage.setItem('user_slug', slug);
+  return slug;
+}
+
 export function saveSession(data: LoginResponse): void {
   localStorage.setItem('access_token', data.access_token);
   if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
   localStorage.setItem('is_admin', data.is_admin ? 'true' : 'false');
   localStorage.setItem('admin_session', data.admin_session ? 'true' : 'false');
-  if (data.first_name && data.last_name) {
-    localStorage.setItem('user_slug', `${toSlugPart(data.first_name)}-${toSlugPart(data.last_name)}`);
-  }
+  if (data.first_name && data.last_name) storeUserName(data.first_name, data.last_name);
 }
 
 export function clearSession(): void {

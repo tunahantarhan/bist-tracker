@@ -264,6 +264,8 @@ export interface UserProfile {
   is_verified: boolean;
   totp_enabled: boolean;
   terms_accepted_at: string;
+  created_at: string;
+  last_login_at: string | null;
 }
 
 export interface AdminStats {
@@ -353,6 +355,30 @@ export async function adminVerifyTotp(mfaToken: string, code: string): Promise<L
 
 export async function fetchMe(): Promise<UserProfile> {
   return requestJson('/auth/me', {}, 'Profil alınamadı');
+}
+
+export async function updateProfile(payload: { first_name: string; last_name: string }): Promise<UserProfile> {
+  return requestJson('/auth/me', { method: 'PATCH', body: JSON.stringify(payload) }, 'Profil güncellenemedi.');
+}
+
+/** Changes the password; the backend revokes other sessions and returns a fresh pair for this one. */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const tokens = await requestJson<LoginResponse>(
+    '/auth/change-password',
+    { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) },
+    'Şifre değiştirilemedi.'
+  );
+  saveSession(tokens);
+}
+
+export async function logoutAllSessions(): Promise<void> {
+  await requestJson('/auth/logout-all', { method: 'POST' }, 'Oturumlar kapatılamadı.');
+  clearSession();
+}
+
+export async function deleteAccount(password: string): Promise<void> {
+  await requestJson('/auth/delete-account', { method: 'POST', body: JSON.stringify({ password }) }, 'Hesap silinemedi.');
+  clearSession();
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +489,10 @@ export async function fetchAlerts(): Promise<CustomAlert[]> {
 
 export async function createAlert(payload: { symbol: string; rule_id: number | null; timeframe: string }): Promise<CustomAlert> {
   return requestJson('/alerts', { method: 'POST', body: JSON.stringify(payload) }, 'Alarm eklenirken bir hata oluştu.');
+}
+
+export async function setAlertActive(id: number, isActive: boolean): Promise<CustomAlert> {
+  return requestJson(`/alerts/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: isActive }) }, 'Alarm güncellenemedi.');
 }
 
 export async function deleteAlert(id: number): Promise<void> {

@@ -1,272 +1,352 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { 
-  ArrowLeft, User, Mail, Calendar, Bell, 
-  Trash2, ExternalLink, RefreshCw, AlertCircle, CheckCircle2 
-} from 'lucide-react';
-import { CustomAlert, deleteAlert, fetchAlerts, fetchMe, fetchRules, UserProfile } from '@/services/api';
-import { getAccessToken } from '@/lib/auth';
-import { Rule } from '@/types';
+import { useRouter } from 'next/navigation';
+import type { LucideIcon } from 'lucide-react';
+import { Bell, BellRing, ChevronRight, LayoutGrid, Settings } from 'lucide-react';
+import {
+  addToWatchlist,
+  clearAllNotifications,
+  deleteAlert,
+  deleteNotification,
+  fetchAlerts,
+  fetchMarketOverview,
+  fetchMe,
+  fetchNotifications,
+  fetchRules,
+  fetchWatchlist,
+  markAllNotificationsAsRead,
+  markNotificationAsRead,
+  removeFromWatchlist,
+  setAlertActive,
+  type AppNotification,
+  type CustomAlert,
+  type StockOverviewItem,
+  type UserProfile,
+} from '@/services/api';
+import type { Rule } from '@/types';
+import { getAccessToken, storeUserName } from '@/lib/auth';
+import DashboardHeader from '@/components/dashboard/DashboardHeader';
+import AppFooter from '@/components/dashboard/AppFooter';
+import { FeedbackProvider, useFeedback } from '@/components/ui/feedback';
+import ProfileHero from '@/components/profile/ProfileHero';
+import { GettingStarted, RecentNotifications, WatchlistCards } from '@/components/profile/OverviewTab';
+import AlertsTab from '@/components/profile/AlertsTab';
+import NotificationsTab from '@/components/profile/NotificationsTab';
+import AccountTab from '@/components/profile/AccountTab';
 
-export default function UserProfilePage() {
+type Tab = 'ozet' | 'alarmlar' | 'bildirimler' | 'hesap';
+
+const TABS: { key: Tab; label: string; short?: string; icon: LucideIcon }[] = [
+  { key: 'ozet', label: 'Özet', icon: LayoutGrid },
+  { key: 'alarmlar', label: 'Alarmlar', icon: Bell },
+  { key: 'bildirimler', label: 'Bildirimler', icon: BellRing },
+  { key: 'hesap', label: 'Hesap ve güvenlik', short: 'Hesap', icon: Settings },
+];
+
+function tabFromHash(hash: string): Tab {
+  const key = hash.replace('#', '') as Tab;
+  return TABS.some((t) => t.key === key) ? key : 'ozet';
+}
+
+function ProfileSkeleton() {
+  return (
+    <div className="space-y-5" aria-busy="true" aria-label="Profil yükleniyor">
+      <div className="h-56 animate-pulse rounded-2xl border border-slate-800/80 bg-[#12161f] xl:h-40" />
+      <div className="h-11 w-full max-w-lg animate-pulse rounded-xl bg-[#12161f]" />
+      <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
+        <div className="h-80 animate-pulse rounded-2xl border border-slate-800/80 bg-[#12161f]" />
+        <div className="h-80 animate-pulse rounded-2xl border border-slate-800/80 bg-[#12161f]" />
+      </div>
+    </div>
+  );
+}
+
+function ProfileConsole() {
   const router = useRouter();
+  const { toast, confirm } = useFeedback();
+
+  const [tab, setTab] = useState<Tab>(() => (typeof window === 'undefined' ? 'ozet' : tabFromHash(window.location.hash)));
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [market, setMarket] = useState<Record<string, StockOverviewItem>>({});
   const [alerts, setAlerts] = useState<CustomAlert[]>([]);
-  const [rulesMap, setRulesMap] = useState<Record<number, Rule>>({});
-  const [loading, setLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  // Loads profile, alerts and rule names; state is only set after the requests resolve
-  const loadData = useCallback(() => {
-    Promise.all([
-      fetchMe().catch(() => null),
-      fetchAlerts().catch(() => [] as CustomAlert[]),
-      fetchRules().catch(() => [] as Rule[]),
-    ])
-      .then(([user, alertList, rulesData]) => {
-        if (user) setProfile(user);
-        setAlerts(alertList);
-        setRulesMap(Object.fromEntries(rulesData.map((r) => [r.id, r])));
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const [rules, setRules] = useState<Record<number, Rule>>({});
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [busyAlert, setBusyAlert] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const watchInFlight = useRef(false);
 
   useEffect(() => {
     if (!getAccessToken()) {
-      router.push('/giris');
+      router.replace('/giris');
       return;
     }
-    loadData();
-  }, [router, loadData]);
+    Promise.all([
+      fetchMe(),
+      fetchWatchlist().catch(() => []),
+      fetchAlerts().catch(() => [] as CustomAlert[]),
+      fetchRules().catch(() => [] as Rule[]),
+      fetchNotifications(50).catch(() => [] as AppNotification[]),
+    ])
+      .then(([me, wl, alertList, ruleList, notes]) => {
+        setProfile(me);
+        setWatchlist(wl.map((w) => w.symbol));
+        setAlerts(alertList);
+        setRules(Object.fromEntries(ruleList.map((r) => [r.id, r])));
+        setNotifications(notes);
+      })
+      .catch(() => setLoadError(true));
 
-  const handleRefresh = () => {
-    setLoading(true);
-    loadData();
-  };
+    // Prices and scores come from the latest scan; the page works without them
+    fetchMarketOverview()
+      .then((o) => setMarket(Object.fromEntries(o.items.map((i) => [i.symbol, i]))))
+      .catch(() => {});
+  }, [router]);
 
-  const handleDeleteAlert = async (alertId: number, symbol: string) => {
-    setDeletingId(alertId);
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash(window.location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  const navigate = useCallback((t: Tab) => {
+    setTab(t);
+    window.history.replaceState(null, '', t === 'ozet' ? window.location.pathname : `#${t}`);
+  }, []);
+
+  // ---- Watchlist ---------------------------------------------------------
+  const toggleWatch = useCallback(
+    async (symbol: string, isAdded: boolean) => {
+      if (watchInFlight.current) return;
+      watchInFlight.current = true;
+      try {
+        if (isAdded) {
+          await removeFromWatchlist(symbol);
+          setWatchlist((prev) => prev.filter((s) => s !== symbol));
+          toast(`${symbol} takip listesinden çıkarıldı.`, 'info');
+        } else {
+          await addToWatchlist(symbol);
+          setWatchlist((prev) => [...prev, symbol]);
+          toast(`${symbol} takip listesine eklendi.`);
+        }
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Takip listesi güncellenemedi.', 'error');
+      } finally {
+        watchInFlight.current = false;
+      }
+    },
+    [toast]
+  );
+
+  // ---- Alerts ------------------------------------------------------------
+  const toggleAlert = async (alert: CustomAlert) => {
+    setBusyAlert(alert.id);
     try {
-      await deleteAlert(alertId);
-      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
-      showToast(`${symbol} alarmı başarıyla kaldırıldı.`);
+      const updated = await setAlertActive(alert.id, !alert.is_active);
+      setAlerts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      toast(updated.is_active ? `${alert.symbol} alarmı yeniden aktif.` : `${alert.symbol} alarmı duraklatıldı.`, 'info');
     } catch (err) {
-      console.error('Alarm silme hatası:', err);
+      toast(err instanceof Error ? err.message : 'Alarm güncellenemedi.', 'error');
     } finally {
-      setDeletingId(null);
+      setBusyAlert(null);
     }
   };
 
-  const formatDate = (dateStr?: string | null) => {
-    if (!dateStr) return 'Tetiklenmedi';
+  const removeAlert = async (alert: CustomAlert) => {
+    const ok = await confirm({
+      title: `${alert.symbol} alarmı silinsin mi?`,
+      message: 'Alarm kaldırılır; istersen daha sonra hisse detay sayfasından yeniden kurabilirsin.',
+      confirmLabel: 'Sil',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setBusyAlert(alert.id);
     try {
-      return new Date(dateStr).toLocaleDateString('tr-TR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return dateStr;
+      await deleteAlert(alert.id);
+      setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+      toast(`${alert.symbol} alarmı silindi.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Alarm silinemedi.', 'error');
+    } finally {
+      setBusyAlert(null);
     }
   };
+
+  // ---- Notifications -----------------------------------------------------
+  const readNotification = async (n: AppNotification) => {
+    setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
+    await markNotificationAsRead(n.id).catch(() => {});
+  };
+
+  const readAll = async () => {
+    try {
+      await markAllNotificationsAsRead();
+      setNotifications((prev) => prev.map((x) => ({ ...x, is_read: true })));
+    } catch {
+      toast('Bildirimler güncellenemedi.', 'error');
+    }
+  };
+
+  const removeNotification = async (n: AppNotification) => {
+    try {
+      await deleteNotification(n.id);
+      setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+    } catch {
+      toast('Bildirim silinemedi.', 'error');
+    }
+  };
+
+  const clearNotifications = async () => {
+    const ok = await confirm({
+      title: 'Tüm bildirimler silinsin mi?',
+      message: 'Bildirim geçmişin temizlenir. Alarmların etkilenmez.',
+      confirmLabel: 'Temizle',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await clearAllNotifications();
+      setNotifications([]);
+      toast('Bildirimler temizlendi.');
+    } catch {
+      toast('Bildirimler temizlenemedi.', 'error');
+    }
+  };
+
+  // ---- Profile -----------------------------------------------------------
+  const onProfileUpdated = (p: UserProfile) => {
+    setProfile(p);
+    if (p.first_name && p.last_name) {
+      const slug = storeUserName(p.first_name, p.last_name);
+      window.history.replaceState(null, '', `/kullanici/${slug}${window.location.hash}`);
+    }
+  };
+
+  const stats = useMemo(
+    () => ({
+      watchlist: watchlist.length,
+      activeAlerts: alerts.filter((a) => a.is_active).length,
+      totalAlerts: alerts.length,
+      triggeredAlerts: alerts.filter((a) => a.last_triggered_at).length,
+      unread: notifications.filter((n) => !n.is_read).length,
+    }),
+    [watchlist, alerts, notifications]
+  );
+
+  const steps = profile
+    ? [
+        { label: 'E-posta adresini doğrula', hint: 'Giriş ve bildirimler için gerekli', done: profile.is_verified },
+        { label: 'Takip listene hisse ekle', hint: 'Üstteki aramayı kullan ("/" kısayolu)', done: watchlist.length > 0, href: '/ana-sayfa' },
+        { label: 'İlk alarmını kur', hint: 'Hisse detayında "Alarm kur" düğmesi', done: alerts.length > 0, href: '/ana-sayfa' },
+        { label: 'Bir bildirim al', hint: 'Alarmın tetiklendiğinde burada görünür', done: notifications.length > 0, onClick: () => navigate('alarmlar') },
+      ]
+    : [];
 
   return (
-    <div className="min-h-screen bg-[#0b0e14] text-slate-100 flex flex-col">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
-          <span className="text-xs font-medium">{toastMessage}</span>
-        </div>
-      )}
+    <div className="flex min-h-screen flex-col bg-[#0b0e14] text-slate-200">
+      <DashboardHeader watchlist={watchlist} onToggleWatchlist={toggleWatch} onSelect={(s) => router.push(`/detay/${s}`)} />
 
-      {/* Top Header */}
-      <header className="px-4 sm:px-8 py-3.5 border-b border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md sticky top-0 z-40 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <button
-            type="button"
-            onClick={() => router.push('/ana-sayfa')}
-            className="p-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
-            title="Panele Dön"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <div>
-            <h1 className="text-sm font-bold text-slate-100">Kullanıcı Profili</h1>
-            <p className="text-[10px] text-slate-400">Hesap bilgileri ve aktif alarm yönetimi</p>
+      <main className="mx-auto w-full max-w-7xl flex-1 space-y-5 px-4 py-5 md:px-6">
+        <nav aria-label="Konum" className="flex items-center gap-1.5 font-data text-[11px] text-slate-500">
+          <Link href="/ana-sayfa" className="hover:text-slate-300">
+            Panel
+          </Link>
+          <ChevronRight className="h-3 w-3" />
+          <span className="text-slate-300">Hesabım</span>
+        </nav>
+
+        {loadError ? (
+          <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8 text-center text-sm text-rose-200">
+            Profil bilgileri alınamadı. Lütfen sayfayı yenile.
           </div>
-        </div>
+        ) : !profile ? (
+          <ProfileSkeleton />
+        ) : (
+          <>
+            <ProfileHero profile={profile} stats={stats} onNavigate={navigate} />
 
-        <button
-          type="button"
-          onClick={handleRefresh}
-          className="p-2 rounded-lg border border-slate-700 bg-[#161b26] hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-          title="Yenile"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-blue-400' : ''}`} />
-        </button>
-      </header>
-
-      {/* Main Container */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-8 space-y-8">
-        
-        {/* User Identity Card */}
-        <div className="rounded-2xl border border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md p-6 shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-            <div className="flex items-center space-x-4">
-              <div className="h-16 w-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-xl shadow-[0_0_20px_rgba(37,99,235,0.2)]">
-                {profile ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase() : <User className="h-7 w-7" />}
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2.5">
-                  <h2 className="text-xl font-bold text-white tracking-tight">
-                    {profile ? `${profile.first_name} ${profile.last_name}` : 'Kullanıcı'}
-                  </h2>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                    {profile?.tier ? profile.tier.toUpperCase() : 'STANDART'}
-                  </span>
-                </div>
-                <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
-                  <Mail className="h-3.5 w-3.5 text-slate-500" />
-                  <span>{profile?.email || '---'}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap sm:flex-col items-start sm:items-end gap-2 text-xs text-slate-400 border-t sm:border-t-0 border-slate-800/80 pt-4 sm:pt-0">
-              <div className="flex items-center space-x-1.5">
-                <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                <span>Kayıt Tarihi: <strong className="text-slate-300 font-mono">{formatDate(profile?.terms_accepted_at)}</strong></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Custom Alerts Management Section */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Bell className="h-5 w-5 text-amber-400" />
-              <h2 className="text-base font-bold text-white tracking-tight">Aktif Hisse Alarmlarım</h2>
-              <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                {alerts.length}
-              </span>
-            </div>
-            <span className="text-xs text-slate-500 hidden sm:inline">
-              Şartlar sağlandığında bildirim çanına ve kayıtlı e-postanıza uyarı iletilir.
-            </span>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800/80 bg-[#12161f]/80 backdrop-blur-md overflow-hidden shadow-xl">
-            {loading ? (
-              <div className="p-12 text-center text-xs font-mono text-slate-500 flex items-center justify-center space-x-2">
-                <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />
-                <span>Alarmlar yükleniyor...</span>
-              </div>
-            ) : alerts.length === 0 ? (
-              <div className="p-12 text-center space-y-3">
-                <div className="h-12 w-12 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-center mx-auto text-slate-500">
-                  <AlertCircle className="h-6 w-6" />
-                </div>
-                <h3 className="text-sm font-semibold text-slate-300">Henüz kurulu bir özel alarmınız yok.</h3>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Panelden veya hisse detay sayfalarındaki <strong className="text-amber-400">&quot;Alarm Kur&quot;</strong> butonuna tıklayarak istediğiniz hisseler için teknik kural alarmları oluşturabilirsiniz.
-                </p>
-                <div className="pt-2">
-                  <Link
-                    href="/ana-sayfa"
-                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
+            <div role="tablist" aria-label="Profil bölümleri" className="-mx-4 flex gap-1 overflow-x-auto border-b border-slate-800/80 px-4 md:mx-0 md:px-0">
+              {TABS.map((t) => {
+                const active = tab === t.key;
+                const badge = t.key === 'alarmlar' ? stats.totalAlerts : t.key === 'bildirimler' ? stats.unread : 0;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => navigate(t.key)}
+                    className={`relative inline-flex shrink-0 cursor-pointer items-center gap-2 px-2.5 py-3 sm:px-3.5 text-sm transition-colors ${
+                      active ? 'text-white' : 'text-slate-500 hover:text-slate-200'
+                    }`}
                   >
-                    <span>Hisseleri İncele</span>
-                    <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
-                  </Link>
+                    <t.icon className={`h-4 w-4 ${active ? 'text-blue-400' : ''}`} />
+                    {t.short ? (
+                      <>
+                        <span className="sm:hidden">{t.short}</span>
+                        <span className="hidden sm:inline">{t.label}</span>
+                      </>
+                    ) : (
+                      t.label
+                    )}
+                    {badge > 0 && (
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 font-data text-[10px] ${
+                          t.key === 'bildirimler' ? 'bg-blue-500/15 text-blue-300' : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {badge}
+                      </span>
+                    )}
+                    <span
+                      className={`absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-blue-500 transition-opacity ${active ? 'opacity-100' : 'opacity-0'}`}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div key={tab} className="animate-in fade-in slide-in-from-bottom-1 duration-200">
+              {tab === 'ozet' && (
+                <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+                  <div className="min-w-0">
+                    <WatchlistCards symbols={watchlist} market={market} onRemove={(s) => toggleWatch(s, true)} />
+                  </div>
+                  <div className="min-w-0 space-y-5">
+                    <GettingStarted steps={steps} />
+                    <RecentNotifications items={notifications.slice(0, 5)} onShowAll={() => navigate('bildirimler')} />
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-300 divide-y divide-slate-800/80">
-                  <thead className="bg-[#161b26] text-slate-400 uppercase font-mono text-[10px] tracking-wider">
-                    <tr>
-                      <th className="px-5 py-3.5">Hisse</th>
-                      <th className="px-5 py-3.5">Takip Edilen Kural</th>
-                      <th className="px-5 py-3.5">Periyot</th>
-                      <th className="px-5 py-3.5">Kurulum Tarihi</th>
-                      <th className="px-5 py-3.5">Son Tetiklenme</th>
-                      <th className="px-5 py-3.5 text-right">İşlem</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {alerts.map((item) => {
-                      const ruleObj = item.rule_id ? rulesMap[item.rule_id] : null;
-                      const ruleTitle = ruleObj ? ruleObj.name : 'RSI Düşen Trend Kırılımı';
-                      const isDeleting = deletingId === item.id;
-
-                      return (
-                        <tr key={item.id} className="hover:bg-slate-800/25 transition-colors">
-                          <td className="px-5 py-4 whitespace-nowrap">
-                            <Link
-                              href={`/detay/${item.symbol}`}
-                              className="font-mono font-bold text-white hover:text-blue-400 transition-colors inline-flex items-center space-x-1 group"
-                            >
-                              <span>{item.symbol}</span>
-                              <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            </Link>
-                          </td>
-                          <td className="px-5 py-4 whitespace-nowrap">
-                            <span className="font-medium text-slate-200">{ruleTitle}</span>
-                          </td>
-                          <td className="px-5 py-4 whitespace-nowrap">
-                            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[11px] text-amber-300">
-                              {item.timeframe.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="px-5 py-4 whitespace-nowrap font-mono text-slate-400 text-[11px]">
-                            {formatDate(item.created_at)}
-                          </td>
-                          <td className="px-5 py-4 whitespace-nowrap font-mono text-slate-400 text-[11px]">
-                            {item.last_triggered_at ? (
-                              <span className="text-emerald-400 font-semibold">{formatDate(item.last_triggered_at)}</span>
-                            ) : (
-                              <span className="text-slate-500">Henüz tetiklenmedi</span>
-                            )}
-                          </td>
-                          <td className="px-5 py-4 whitespace-nowrap text-right">
-                            <button
-                              type="button"
-                              disabled={isDeleting}
-                              onClick={() => handleDeleteAlert(item.id, item.symbol)}
-                              className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20 transition-all cursor-pointer disabled:opacity-50"
-                              title="Alarmı Sil"
-                            >
-                              {isDeleting ? (
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-
+              )}
+              {tab === 'alarmlar' && (
+                <AlertsTab alerts={alerts} rules={rules} market={market} busyId={busyAlert} onToggle={toggleAlert} onDelete={removeAlert} />
+              )}
+              {tab === 'bildirimler' && (
+                <NotificationsTab
+                  items={notifications}
+                  onRead={readNotification}
+                  onReadAll={readAll}
+                  onDelete={removeNotification}
+                  onClear={clearNotifications}
+                />
+              )}
+              {tab === 'hesap' && <AccountTab profile={profile} onUpdated={onProfileUpdated} />}
+            </div>
+          </>
+        )}
       </main>
+
+      <AppFooter />
     </div>
+  );
+}
+
+export default function UserProfilePage() {
+  return (
+    <FeedbackProvider>
+      <ProfileConsole />
+    </FeedbackProvider>
   );
 }
