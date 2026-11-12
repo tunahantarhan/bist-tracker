@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { TrendingUp, TrendingDown } from 'lucide-react';
 import { fetchTicker, TickerItem } from '@/services/api';
+import { formatPct, formatPrice } from '@/components/dashboard/Panel';
 
 interface StockTickerProps {
   items?: { symbol: string; current_price: number; change_pct: number }[];
@@ -32,15 +32,14 @@ const TickerCell = ({ item }: { item: TickerItem }) => {
         ${flash === 'up' ? 'bg-emerald-500/20' : flash === 'down' ? 'bg-rose-500/20' : 'hover:bg-slate-800/40'}
       `}
     >
-      <span className="text-xs font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
+      <span className="font-data text-xs font-semibold text-slate-200 transition-colors group-hover:text-blue-400">
         {item.symbol}
       </span>
-      <span className={`text-xs font-mono transition-colors duration-300 ${flash === 'up' ? 'text-emerald-400' : flash === 'down' ? 'text-rose-400' : 'text-slate-100'}`}>
-        ₺{item.current_price.toFixed(2)}
+      <span className={`font-data text-xs transition-colors duration-300 ${flash === 'up' ? 'text-emerald-400' : flash === 'down' ? 'text-rose-400' : 'text-slate-100'}`}>
+        ₺{formatPrice(item.current_price)}
       </span>
-      <span className={`flex items-center text-[10px] font-mono font-semibold ${item.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-        {item.change_pct >= 0 ? <TrendingUp className="h-3 w-3 mr-0.5" /> : <TrendingDown className="h-3 w-3 mr-0.5" />}
-        {item.change_pct >= 0 ? '+' : ''}{item.change_pct}%
+      <span className={`font-data text-[10px] font-semibold ${item.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+        {item.change_pct >= 0 ? '▲' : '▼'} {formatPct(item.change_pct)}
       </span>
     </a>
   );
