@@ -21,6 +21,10 @@ class AlertCreate(BaseModel):
     timeframe: Optional[Literal["5m", "15m", "1h", "4h", "1d"]] = "15m"
 
 
+class AlertUpdate(BaseModel):
+    is_active: bool
+
+
 class AlertResponse(BaseModel):
     id: int
     symbol: str
@@ -85,6 +89,25 @@ async def create_custom_alert(
     await db.commit()
     await db.refresh(new_alert)
     return new_alert
+
+
+@router.patch("/{alert_id}", response_model=AlertResponse)
+async def update_alert(
+    alert_id: int,
+    payload: AlertUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pauses or resumes an alert; paused alerts are skipped by the dispatcher."""
+    alert = await db.scalar(
+        select(UserCustomAlert).where(UserCustomAlert.id == alert_id, UserCustomAlert.user_id == current_user.id)
+    )
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alarm bulunamadı")
+    alert.is_active = payload.is_active
+    await db.commit()
+    await db.refresh(alert)
+    return alert
 
 
 @router.delete("/symbol/{symbol}")

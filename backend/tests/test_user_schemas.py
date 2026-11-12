@@ -25,3 +25,19 @@ def test_terms_must_be_accepted():
 def test_reset_uses_same_policy():
     with pytest.raises(ValidationError):
         PasswordResetRequest(token="t", password="sadeceharf")
+
+
+def test_profile_update_strips_and_rejects_blank_names():
+    from app.schemas.user import ProfileUpdate
+
+    assert ProfileUpdate(first_name="  Deniz ", last_name="Kaya").first_name == "Deniz"
+    with pytest.raises(ValidationError):
+        ProfileUpdate(first_name="   ", last_name="Kaya")
+
+
+def test_password_change_enforces_policy_on_new_password_only():
+    from app.schemas.user import PasswordChangeRequest
+
+    assert PasswordChangeRequest(current_password="old", new_password="Yeni12345").new_password == "Yeni12345"
+    with pytest.raises(ValidationError):
+        PasswordChangeRequest(current_password="Old12345", new_password="sadeceharf")

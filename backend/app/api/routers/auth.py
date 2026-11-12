@@ -9,15 +9,16 @@ Flows
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, oauth2_scheme
 from app.core import rate_limit, totp
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import (
+    ACCESS_TOKEN_TYPE,
     EMAIL_VERIFY_TOKEN_TYPE,
     MFA_PENDING_TOKEN_TYPE,
     PASSWORD_RESET_TOKEN_TYPE,
@@ -31,10 +32,13 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.user import (
+    AccountDeleteRequest,
     AdminLoginResponse,
     EmailRequest,
     MessageResponse,
+    PasswordChangeRequest,
     PasswordResetRequest,
+    ProfileUpdate,
     RegisterResponse,
     Token,
     TokenRefreshRequest,
@@ -55,6 +59,7 @@ _1_HOUR = 60 * 60
 LOGIN_FAILURES_PER_EMAIL = 8
 ADMIN_LOGIN_FAILURES_PER_EMAIL = 5
 TOTP_FAILURES_PER_USER = 5
+PASSWORD_CONFIRM_FAILURES_PER_USER = 5
 
 INVALID_CREDENTIALS = "E-posta adresi veya şifre hatalı."
 GENERIC_MAIL_MESSAGE = "Bu adrese kayıtlı bir hesap varsa birkaç dakika içinde e-posta gönderilecek."
@@ -294,6 +299,74 @@ async def logout_all(current_user: User = Depends(get_current_user), db: AsyncSe
 async def get_my_profile(current_user: User = Depends(get_current_user)):
     """Returns the profile of the currently authenticated user."""
     return current_user
+
+
+# ---------------------------------------------------------------------------
+# Account self-service (profile page)
+# ---------------------------------------------------------------------------
+
+
+async def _confirm_password(user: User, password: str) -> None:
+    """Re-checks the password before sensitive account changes, with a per-user failure limit."""
+    fail_key = f"pwdconfirm:fail:{user.id}"
+    await rate_limit.ensure_below(fail_key, PASSWORD_CONFIRM_FAILURES_PER_USER)
+    if not verify_password(password, user.hashed_password):
+        await rate_limit.record(fail_key, _15_MIN)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "wrong_password", "message": "Mevcut şifreniz hatalı."},
+        )
+    await rate_limit.reset(fail_key)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_my_profile(
+    body: ProfileUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    current_user.first_name = body.first_name
+    current_user.last_name = body.last_name
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.post("/change-password", response_model=Token)
+async def change_password(
+    body: PasswordChangeRequest,
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Changes the password, signs out every other session and returns fresh tokens for this one."""
+    await _confirm_password(current_user, body.current_password)
+    if verify_password(body.new_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "same_password", "message": "Yeni şifre mevcut şifrenizle aynı olamaz."},
+        )
+
+    current_user.hashed_password = get_password_hash(body.new_password)
+    current_user.token_version += 1
+    await db.commit()
+    # Keep the admin scope only if this session already had it
+    claims = decode_token(token, ACCESS_TOKEN_TYPE)
+    return _issue_tokens(current_user, admin_scope=bool(claims and claims.get("adm")) and bool(current_user.is_admin))
+
+
+@router.post("/delete-account", response_model=MessageResponse)
+async def delete_account(
+    body: AccountDeleteRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Permanently deletes the account; watchlist, alerts and notifications cascade."""
+    if current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Yönetici hesapları buradan silinemez. Önce yönetici yetkisinin kaldırılması gerekir.",
+        )
+    await _confirm_password(current_user, body.password)
+    await db.execute(delete(User).where(User.id == current_user.id))
+    await db.commit()
+    return {"message": "Hesabınız ve tüm verileriniz silindi."}
 
 
 # ---------------------------------------------------------------------------

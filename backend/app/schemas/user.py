@@ -94,8 +94,37 @@ class UserResponse(BaseModel):
     totp_enabled: bool
     tier: str
     terms_accepted_at: datetime
+    created_at: datetime
+    last_login_at: datetime | None = None
     first_name: str | None = None
     last_name: str | None = None
+
+
+class ProfileUpdate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def strip_names(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Ad ve soyad boş bırakılamaz.")
+        return v
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+
+class AccountDeleteRequest(BaseModel):
+    password: str = Field(max_length=128)
 
 
 class Token(BaseModel):
