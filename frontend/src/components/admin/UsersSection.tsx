@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { KeyRound, Loader2, Search, Shield, UserCheck, UserX, Users } from 'lucide-react';
 import type { AdminUserItem } from '@/services/api';
 import { Panel, PanelHeader } from '@/components/dashboard/Panel';
+import { relativeTime } from '@/lib/time';
 
 type Filter = 'all' | 'admins' | 'suspended' | 'unverified';
 
@@ -18,19 +19,6 @@ const TIER_TONE: Record<AdminUserItem['tier'], string> = {
   STANDARD: 'border-blue-500/40 text-blue-200',
   PREMIUM: 'border-amber-500/40 text-amber-200',
 };
-
-export function relativeTime(iso: string | null): string {
-  if (!iso) return 'Hiç';
-  const diff = Date.now() - new Date(iso).getTime();
-  const min = Math.round(diff / 60000);
-  if (min < 1) return 'Az önce';
-  if (min < 60) return `${min} dk önce`;
-  const h = Math.round(min / 60);
-  if (h < 24) return `${h} sa önce`;
-  const d = Math.round(h / 24);
-  if (d < 30) return `${d} gün önce`;
-  return new Date(iso).toLocaleDateString('tr-TR');
-}
 
 function Avatar({ user }: { user: AdminUserItem }) {
   const text = `${user.first_name?.[0] ?? ''}${user.last_name?.[0] ?? ''}`.toLocaleUpperCase('tr-TR') || user.email[0].toUpperCase();

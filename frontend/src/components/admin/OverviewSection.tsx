@@ -7,7 +7,7 @@ import type { Rule } from '@/types';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import { Eyebrow, Panel, PanelHeader } from '@/components/dashboard/Panel';
 import { isBistOpen } from '@/lib/scanSummary';
-import { relativeTime } from './UsersSection';
+import { relativeTime } from '@/lib/time';
 import type { AdminSection } from './AdminShell';
 
 type Check = { label: string; detail: string; level: 'ok' | 'warn' | 'bad'; to?: AdminSection };

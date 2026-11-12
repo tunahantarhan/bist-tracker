@@ -10,7 +10,7 @@ import { CHART_INTERVALS, CHART_PERIODS, Segmented } from '@/components/dashboar
 import { Eyebrow, Panel, PanelHeader } from '@/components/dashboard/Panel';
 import { tfLabel } from '@/lib/timeframes';
 import { ruleFormula } from './ruleFormat';
-import { useFeedback } from './feedback';
+import { useFeedback } from '@/components/ui/feedback';
 
 const SEGMENT_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16', '#f97316', '#14b8a6', '#a855f7'];
 

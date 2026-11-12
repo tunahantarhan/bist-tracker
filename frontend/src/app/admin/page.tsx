@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import CreateRuleDialog from '@/components/rules/CreateRuleDialog';
 import AdminShell, { SECTION_HASH, sectionFromHash, type AdminSection } from '@/components/admin/AdminShell';
-import { FeedbackProvider, useFeedback } from '@/components/admin/feedback';
+import { FeedbackProvider, useFeedback } from '@/components/ui/feedback';
 import OverviewSection from '@/components/admin/OverviewSection';
 import { PrimaryFilterCard, RulePreview, ScoringRules, WeightBalance } from '@/components/admin/RulesSection';
 import UsersSection from '@/components/admin/UsersSection';
