@@ -8,96 +8,78 @@ logger = logging.getLogger(__name__)
 
 class RuleEngine:
     @staticmethod
+    def trendline_geometry(rsi: np.ndarray, lookback: int) -> Tuple[int, float, float, int, float, bool]:
+        """Descending RSI trendline on the series `rsi[:n]` (only past values are used).
+
+        1. Main peak T1 = highest RSI in the lookback window (excluding the last 3 bars).
+        2. Among local peaks after T1 that are below it, the one giving the flattest
+           (max) slope defines the resistance line T1 -> T2; without local peaks, the
+           flattest line to any lower point is used.
+        3. An upward/undefined slope is replaced by a slightly falling invalid line.
+
+        Returns (x1, y1, slope, t2_x, t2_y, found_t2). Shared by live scoring and the
+        walk-forward backtest so both use exactly the same definition.
+        """
+        n = len(rsi)
+        start_idx = max(0, n - lookback)
+        search_end = n - 3
+        if search_end <= start_idx + 2:
+            start_idx = max(0, n - 30)
+
+        window = rsi[start_idx:search_end]
+        if window.size == 0 or np.all(np.isnan(window)):
+            raise ValueError("Empty RSI window for trendline detection.")
+
+        x1 = start_idx + int(np.nanargmax(window))
+        y1 = float(rsi[x1])
+
+        best_slope = -float("inf")
+        found_t2 = False
+        t2_x, t2_y = x1 + 1, y1
+
+        for idx in range(x1 + 2, n - 1):
+            val = rsi[idx]
+            if val > rsi[idx - 1] and val > rsi[idx + 1] and val < y1:
+                s = (val - y1) / float(idx - x1)
+                if s > best_slope:
+                    best_slope, t2_x, t2_y, found_t2 = s, idx, float(val), True
+
+        if not found_t2:
+            for idx in range(x1 + 2, n - 1):
+                val = rsi[idx]
+                if val < y1:
+                    s = (val - y1) / float(idx - x1)
+                    if s > best_slope:
+                        best_slope, t2_x, t2_y, found_t2 = s, idx, float(val), True
+
+        slope = best_slope if found_t2 and best_slope < 0 else -0.1
+        return x1, y1, float(slope), t2_x, t2_y, found_t2
+
+    @staticmethod
     def calculate_rsi_downtrend_series(
         close: pd.Series, params: Dict[str, Any] | None = None
     ) -> Tuple[pd.Series, Dict[str, Any]]:
-        """
-        Decline Trendline:
-        1. Finds the main peak (T1).
-        2. Finds the best slope that limits the price from above by finding local peaks (T2) after T1.
-        3. Confirms that the tip of the trend does not fall into "bottom regions" (e.g., below 30).
-        """
+        """RSI descending trendline (see `trendline_geometry`) plus the qualification gates:
+        the main peak must reach `min_peak` and the line's tip must be at or below
+        `max_trend_end` (the line has fallen into the bottom region)."""
         params = params or {}
         rsi_length = int(params.get("length", params.get("rsi_length", 14)))
         lookback = int(params.get("lookback", 60))
         min_peak_rsi = float(params.get("min_peak", 55.0))
-        
-        # Trendline is allowed to go down to 0-30
         max_trend_end = float(params.get("max_trend_end", 30.0))
 
         rsi = ta.rsi(close, length=rsi_length)
         if rsi is None or len(rsi.dropna()) < 15:
             raise ValueError("Insufficient data to compute RSI trendline.")
 
-        n = len(rsi)
-        start_idx = max(0, n - lookback)
-        search_end = n - 3
+        values = rsi.to_numpy(dtype=float)
+        n = len(values)
+        x1, y1, slope, t2_x, t2_y, found_t2 = RuleEngine.trendline_geometry(values, lookback)
 
-        if search_end <= start_idx + 2:
-            start_idx = max(0, n - 30)
-
-        window = rsi.iloc[start_idx:search_end]
-        if window.dropna().empty:
-            raise ValueError("Empty RSI window for trendline detection.")
-
-        # 1)
-        peak_pos_rel = int(np.nanargmax(window.values))
-        x1 = start_idx + peak_pos_rel
-        y1 = float(rsi.iloc[x1])
-
-        # 2)
-        best_slope = -float('inf')
-        found_t2 = False
-        t2_x = x1 + 1
-        t2_y = y1
-
-        # Only find local peaks after the main peak (x1)
-        peaks = []
-        for idx in range(x1 + 2, n - 1):
-            val_prev = float(rsi.iloc[idx-1])
-            val_curr = float(rsi.iloc[idx])
-            val_next = float(rsi.iloc[idx+1])
-            if val_curr > val_prev and val_curr > val_next:
-                peaks.append((idx, val_curr))
-
-        # From the first peak, draw a tangent line to a second peak below it
-        for px, py in peaks:
-            if py < y1:  # The second peak must be below the first peak
-                s = (py - y1) / float(px - x1)
-                # To find the widest angle (the outermost/topmost) resistance line, take the max slope
-                if s > best_slope:
-                    best_slope = s
-                    t2_x = px
-                    t2_y = py
-                    found_t2 = True
-
-        # If there is no clear local peak, consider the best slope to the lowest point after the main peak
-        if not found_t2:
-            for idx in range(x1 + 2, n - 1):
-                py = float(rsi.iloc[idx])
-                if py < y1:
-                    s = (py - y1) / float(idx - x1)
-                    if s > best_slope:
-                        best_slope = s
-                        t2_x = idx
-                        t2_y = py
-                        found_t2 = True
-
-        # If there is no trend or the slope is upward, assign a slightly downward invalid slope
-        if not found_t2 or best_slope >= 0:
-            slope = -0.1
-        else:
-            slope = best_slope
-
-        # 3)
         trend_values = np.full(n, np.nan)
-        for idx in range(x1, n):
-            line_val = y1 + slope * (idx - x1)
-            trend_values[idx] = max(0.0, min(100.0, line_val))
-
+        trend_values[x1:] = np.clip(y1 + slope * np.arange(n - x1, dtype=float), 0.0, 100.0)
         trend_series = pd.Series(trend_values, index=rsi.index)
 
-        # Tip of the trend (current value of the trend)
         current_trend_val = trend_values[n - 1]
 
         # Rule: The tip of the trend must have fallen into the defined bottom region (0-40)
