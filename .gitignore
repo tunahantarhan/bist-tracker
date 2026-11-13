@@ -43,3 +43,6 @@ CURSOR.md
 notlar/
 # Thesis materials (local only)
 tez/
+
+# Local data caches (backtest price downloads)
+backend/.cache/
