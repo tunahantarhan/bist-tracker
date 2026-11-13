@@ -7,7 +7,11 @@ from app.core.database import get_db
 from app.models.rule import Rule
 from app.models.universe import UniverseStock
 from app.models.user import SubscriptionTier, User
+from app.providers.quotes import quote_book
+from app.providers.yahoo_gateway import gateway
+from app.providers.yfinance_provider import provider_stats
 from app.schemas.user import AdminUserUpdate
+from app.services.market_service import scan_stats
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(get_current_admin)])
 
@@ -40,6 +44,12 @@ async def get_admin_stats(db: AsyncSession = Depends(get_db)):
         "total_users": total_users or 0,
         "active_stocks": active_stocks or 0,
         "active_rules": active_rules or 0,
+        "data_pipeline": {
+            **gateway.stats(),
+            **quote_book.stats(),
+            **provider_stats(),
+            **scan_stats(),
+        },
     }
 
 

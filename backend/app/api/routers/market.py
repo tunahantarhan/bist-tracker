@@ -1,8 +1,5 @@
-import asyncio
 import re
 
-import pandas as pd
-import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,18 +8,19 @@ from app.api.deps import get_current_admin
 from app.core.database import get_db
 from app.core.stock_catalog import STOCK_CATALOG
 from app.models.universe import UniverseStock
-from app.services.cache_service import CacheService
+from app.providers.quotes import quote_book
 from app.services.market_service import (
     FALLBACK_UNIVERSE,
     get_overview,
     get_symbol_detail,
     invalidate_market_caches,
+    public_overview,
 )
 
 router = APIRouter(prefix="/market", tags=["Market"])
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{2,10}$")
-Interval = Query("4h", pattern="^(5m|15m|1h|4h|1d)$")
+Interval = Query("1h", pattern="^(5m|15m|1h|4h|1d)$")
 Period = Query(None, pattern="^(5d|1mo|3mo|6mo|1y|2y|5y)$")
 
 
@@ -33,142 +31,52 @@ def _clean_symbol(symbol: str) -> str:
     return sym
 
 
-CACHE_KEY_TICKER = "bist_ticker_data_v1"
-CACHE_KEY_MACRO = "macro_market_data_v2"
-CACHE_TTL_SECONDS = 60
+TICKER_SIZE = 100  # most liquid stocks; the band is a marquee, not a full list
+TROY_OUNCE_GRAM = 31.1034768
+MACRO_SYMBOLS = {"xu100": "XU100.IS", "usd": "USDTRY=X", "eur": "EURTRY=X", "gold": "GC=F"}
+
 
 @router.get("/ticker")
 async def get_ticker_data():
-    cached = await CacheService.get_json(CACHE_KEY_TICKER)
-    if cached:
-        return cached
-
-    # Cache miss: one bulk Yahoo Finance download for the whole catalog
-    def _fetch_bulk():
-        symbols = list(STOCK_CATALOG.keys())
-        yf_syms_list = [f"{s}.IS" if not s.endswith(".IS") else s for s in symbols]
-        yf_syms_str = " ".join(yf_syms_list)
-        
-        df = yf.download(yf_syms_str, period="5d", interval="1d", progress=False)
-        res = []
-        
-        if isinstance(df.columns, pd.MultiIndex):
-            close_df = df['Close']
-        else:
-            close_df = pd.DataFrame({yf_syms_list[0]: df['Close']})
-
-        for s, yf_s in zip(symbols, yf_syms_list):
-            try:
-                if yf_s in close_df:
-                    closes = close_df[yf_s].dropna().tolist()
-                    if len(closes) >= 2:
-                        curr = float(closes[-1])
-                        prev = float(closes[-2])
-                        change_pct = ((curr - prev) / prev) * 100
-                        res.append({
-                            "symbol": s,
-                            "current_price": round(curr, 2),
-                            "change_pct": round(change_pct, 2)
-                        })
-            except Exception:
-                continue
-        return res
-
-    valid_results = await asyncio.to_thread(_fetch_bulk)
-    
-    if valid_results:
-        await CacheService.set_json(CACHE_KEY_TICKER, valid_results, expiration=CACHE_TTL_SECONDS)
-        return valid_results
-    
-    return []
+    """Ticker band from the shared quote snapshot (same prices as overview and detail)."""
+    quotes = await quote_book.get_quotes(STOCK_CATALOG.keys())
+    ranked = sorted(
+        quotes.items(),
+        key=lambda kv: (kv[1].avg_volume_3m or kv[1].volume or 0) * kv[1].price,
+        reverse=True,
+    )[:TICKER_SIZE]
+    ranked.sort(key=lambda kv: kv[0])
+    return [
+        {"symbol": sym, "current_price": round(q.price, 2), "change_pct": q.change_pct}
+        for sym, q in ranked
+    ]
 
 
 @router.get("/macro")
 async def get_macro_market_data():
-    """
-    Returns BIST 100, Gram Gold, USD/TRY, and EUR/TRY with Redis caching.
-    """
-    cached = await CacheService.get_json(CACHE_KEY_MACRO)
-    if cached:
-        return cached
+    """BIST 100, gram gold (derived: COMEX gold futures / troy ounce x USDTRY), USD/TRY and EUR/TRY."""
+    quotes = await quote_book.get_quotes(MACRO_SYMBOLS.values())
+    xu100, usd, eur, gold = (quotes.get(MACRO_SYMBOLS[k]) for k in ("xu100", "usd", "eur", "gold"))
 
-    def _fetch_macro():
-        macro_tickers = ["XU100.IS", "USDTRY=X", "EURTRY=X", "GC=F"]
-        df = yf.download(" ".join(macro_tickers), period="5d", interval="1d", progress=False)
-        
-        if df.empty:
-            return []
+    def _item(symbol: str, label: str, price: float | None, change: float, prefix: str, as_of: int | None):
+        return {
+            "symbol": symbol, "label": label, "current_price": round(price or 0.0, 2),
+            "change_pct": change, "prefix": prefix, "suffix": "", "as_of": as_of,
+        }
 
-        close_df = df['Close'] if isinstance(df.columns, pd.MultiIndex) else df
-
-        def _get_last_and_prev(col_name: str):
-            if col_name in close_df:
-                series = close_df[col_name].dropna().tolist()
-                if len(series) >= 2:
-                    return float(series[-1]), float(series[-2])
-                elif len(series) == 1:
-                    return float(series[-1]), float(series[-1])
-            return 0.0, 0.0
-
-        xu100_curr, xu100_prev = _get_last_and_prev("XU100.IS")
-        usd_curr, usd_prev = _get_last_and_prev("USDTRY=X")
-        eur_curr, eur_prev = _get_last_and_prev("EURTRY=X")
-        ons_curr, ons_prev = _get_last_and_prev("GC=F")
-
-        # Gram Gold (TRY) calculation: (Ons Gold / 31.1034768) * USDTRY
-        TROY_OUNCE_GRAM = 31.1034768
-        gram_curr = (ons_curr / TROY_OUNCE_GRAM) * usd_curr if ons_curr > 0 and usd_curr > 0 else 0.0
-        gram_prev = (ons_prev / TROY_OUNCE_GRAM) * usd_prev if ons_prev > 0 and usd_prev > 0 else 0.0
-
-        def _calc_pct(curr, prev):
-            if prev > 0:
-                return round(((curr - prev) / prev) * 100, 2)
-            return 0.0
-
-        # Order: BIST 100 -> Gram Altın -> Dolar -> Euro
-        results = [
-            {
-                "symbol": "BIST 100",
-                "label": "BIST 100",
-                "current_price": round(xu100_curr, 2),
-                "change_pct": _calc_pct(xu100_curr, xu100_prev),
-                "prefix": "",
-                "suffix": ""
-            },
-            {
-                "symbol": "GRAM_ALTIN",
-                "label": "Gram Altın",
-                "current_price": round(gram_curr, 2),
-                "change_pct": _calc_pct(gram_curr, gram_prev),
-                "prefix": "₺",
-                "suffix": ""
-            },
-            {
-                "symbol": "USD/TRY",
-                "label": "Dolar",
-                "current_price": round(usd_curr, 2),
-                "change_pct": _calc_pct(usd_curr, usd_prev),
-                "prefix": "₺",
-                "suffix": ""
-            },
-            {
-                "symbol": "EUR/TRY",
-                "label": "Euro",
-                "current_price": round(eur_curr, 2),
-                "change_pct": _calc_pct(eur_curr, eur_prev),
-                "prefix": "₺",
-                "suffix": ""
-            }
-        ]
-        return results
-
-    macro_data = await asyncio.to_thread(_fetch_macro)
-
-    if macro_data:
-        await CacheService.set_json(CACHE_KEY_MACRO, macro_data, expiration=CACHE_TTL_SECONDS)
-        return macro_data
-
-    return []
+    items = []
+    if xu100:
+        items.append(_item("BIST 100", "BIST 100", xu100.price, xu100.change_pct, "", xu100.time))
+    if gold and usd:
+        gram = gold.price / TROY_OUNCE_GRAM * usd.price
+        gram_prev = (gold.prev_close or gold.price) / TROY_OUNCE_GRAM * (usd.prev_close or usd.price)
+        items.append(_item("GRAM_ALTIN", "Gram Altın", gram, round((gram - gram_prev) / gram_prev * 100, 2), "₺",
+                           max(gold.time, usd.time)))
+    if usd:
+        items.append(_item("USD/TRY", "Dolar", usd.price, usd.change_pct, "₺", usd.time))
+    if eur:
+        items.append(_item("EUR/TRY", "Euro", eur.price, eur.change_pct, "₺", eur.time))
+    return items
 
 
 @router.get("/universe")
@@ -208,8 +116,8 @@ async def update_universe(symbols: list[str], db: AsyncSession = Depends(get_db)
 
 @router.get("/overview")
 async def get_market_overview(db: AsyncSession = Depends(get_db)):
-    """Scored snapshot of the active universe (cached; refreshed by the background scanner)."""
-    return await get_overview(db)
+    """Scored snapshot of the active universe (stale-while-revalidate; see market_service)."""
+    return public_overview(await get_overview(db))
 
 
 # Must stay last: catches /market/{symbol}

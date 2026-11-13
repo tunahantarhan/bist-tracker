@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import settings
@@ -15,6 +17,7 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        next_run_time=datetime.now(),  # warm the snapshot right after startup
     )
     scheduler.start()
 

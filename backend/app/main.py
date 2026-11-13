@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.routers import admin, alerts, auth, market, notifications, rules, watchlist
 from app.core.config import settings
@@ -27,6 +28,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BIST Tracker API", lifespan=lifespan)
+
+# Overview/detail payloads are polled every 15 s; JSON compresses ~5-8x
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.add_middleware(
     CORSMiddleware,
