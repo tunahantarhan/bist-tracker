@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     SCAN_INTERVAL_MINUTES: int = 5
     # When False, notifications are produced even outside BIST trading hours (useful for local testing)
     NOTIFY_ONLY_WHEN_MARKET_OPEN: bool = True
+    # Off-session the snapshot only needs refreshing occasionally (FX/gold keep moving)
+    OFF_HOURS_SCAN_INTERVAL_MINUTES: int = 30
+
+    # Yahoo Finance request budget (shared by scanner, charts and scripts in this process)
+    YAHOO_MAX_RPS: float = 4.0          # token bucket refill rate
+    YAHOO_BURST: int = 8                # token bucket capacity
+    YAHOO_CONCURRENCY: int = 6          # simultaneous HTTP calls
+    QUOTE_TTL_SECONDS: int = 60         # batch quote snapshot (single source of truth for prices)
+    INTRADAY_REFRESH_MINUTES: int = 10  # incremental candle sync during the session
+    DAILY_REFRESH_MINUTES: int = 360    # daily bars are kept current from quotes in between
 
     @computed_field
     @property
