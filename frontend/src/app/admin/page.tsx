@@ -75,6 +75,13 @@ function AdminConsole() {
   const loadRules = useCallback(() => fetchRules().then(setRules).catch(() => toast('Kurallar alınamadı.', 'error')), [toast]);
   const loadStats = useCallback(() => fetchAdminStats().then(setStats).catch(() => {}), []);
 
+  // Pipeline metrics (request budget, scan progress) change by the minute
+  useEffect(() => {
+    if (section !== 'overview') return;
+    const id = setInterval(loadStats, 30000);
+    return () => clearInterval(id);
+  }, [section, loadStats]);
+
   useEffect(() => {
     // The panel requires an admin-scoped session (password + 2FA via /admin/giris)
     if (!getAccessToken() || !isAdminSession()) {
@@ -290,6 +297,7 @@ function AdminConsole() {
             usersLoaded={usersLoaded}
             overview={overview}
             activeStocks={savedUniverse.length || stats.active_stocks}
+            pipeline={stats.data_pipeline}
             onNavigate={navigate}
           />
         )}

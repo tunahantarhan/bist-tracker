@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Search, Plus, Check, Eye } from 'lucide-react';
 import { fetchUniverse } from '@/services/api';
 
+const MAX_RESULTS = 40;
+
 interface Stock {
   symbol: string;
   name: string;
@@ -54,8 +56,12 @@ export default function StockSearch({ userWatchlist, onToggleWatchlist, onSelect
   }, [enableShortcut]);
 
   const q = normalize(query.trim());
+  // ~600 stocks: rank ticker-prefix matches first and render a bounded list
   const filteredStocks = q
-    ? availableStocks.filter((stock) => normalize(stock.symbol).includes(q) || normalize(stock.name).includes(q))
+    ? availableStocks
+        .filter((stock) => normalize(stock.symbol).includes(q) || normalize(stock.name).includes(q))
+        .sort((a, b) => Number(!normalize(a.symbol).startsWith(q)) - Number(!normalize(b.symbol).startsWith(q)))
+        .slice(0, MAX_RESULTS)
     : [];
 
   const choose = (stock: Stock) => {

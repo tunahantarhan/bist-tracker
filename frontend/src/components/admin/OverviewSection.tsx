@@ -1,8 +1,8 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { Activity, ArrowRight, Database, HeartPulse, Sliders, UserPlus, Users } from 'lucide-react';
-import type { AdminUserItem, MarketOverviewResponse } from '@/services/api';
+import { Activity, ArrowRight, Database, HeartPulse, Server, Sliders, UserPlus, Users } from 'lucide-react';
+import type { AdminUserItem, DataPipelineStats, MarketOverviewResponse } from '@/services/api';
 import type { Rule } from '@/types';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import { Eyebrow, Panel, PanelHeader } from '@/components/dashboard/Panel';
@@ -26,7 +26,13 @@ function greeting(): string {
   return 'İyi akşamlar';
 }
 
-function buildChecks(rules: Rule[], users: AdminUserItem[], overview: MarketOverviewResponse | null, usersLoaded: boolean): Check[] {
+function buildChecks(
+  rules: Rule[],
+  users: AdminUserItem[],
+  overview: MarketOverviewResponse | null,
+  usersLoaded: boolean,
+  pipeline?: DataPipelineStats
+): Check[] {
   const checks: Check[] = [];
   const primary = rules.find((r) => r.is_primary_filter);
   checks.push(
@@ -73,10 +79,70 @@ function buildChecks(rules: Rule[], users: AdminUserItem[], overview: MarketOver
     checks.push({ label: 'Tarama tazeliği', detail: 'Tarama verisi henüz alınamadı.', level: 'warn' });
   }
 
-  if (overview && overview.items.length === 0) {
+  if (pipeline) {
+    const recent429 = pipeline.last_rate_limit_at && Date.now() / 1000 - pipeline.last_rate_limit_at < 3600;
+    checks.push(
+      pipeline.breaker_open
+        ? { label: 'Veri kaynağı', detail: `Yahoo istek sınırına takıldı; ${pipeline.breaker_seconds_left} sn bekleniyor, önbellekten sunuluyor.`, level: 'warn' }
+        : recent429
+          ? { label: 'Veri kaynağı', detail: 'Son bir saatte istek sınırına takıldı; otomatik geri çekilme devrede.', level: 'warn' }
+          : { label: 'Veri kaynağı', detail: `Son 1 saatte ${pipeline.calls_last_hour} istek, sınır aşımı yok.`, level: 'ok' }
+    );
+  }
+
+  if (overview && overview.items.length === 0 && overview.status !== 'warming') {
     checks.push({ label: 'Hisse evreni', detail: 'Taranan hisse yok; evrenden hisse seçin.', level: 'bad', to: 'universe' });
   }
   return checks;
+}
+
+function fmtInt(n: number | null | undefined): string {
+  return n == null ? '—' : n.toLocaleString('tr-TR');
+}
+
+/** Data pipeline metrics: Yahoo request budget, caches and the background scan. */
+function PipelinePanel({ p }: { p: DataPipelineStats }) {
+  const budget = Math.round(p.max_rps * 3600);
+  const usage = Math.min(100, (p.calls_last_hour / Math.max(1, budget)) * 100);
+  const stats: { label: string; value: string; hint: string }[] = [
+    { label: 'Son 1 saat istek', value: fmtInt(p.calls_last_hour), hint: `üst sınır ${fmtInt(budget)} (${p.max_rps}/sn)` },
+    { label: 'Son tarama', value: p.last_scan_seconds != null ? `${p.last_scan_seconds} sn` : '—', hint: `${fmtInt(p.snapshot_items)} hisse skorlandı` },
+    { label: 'Önbellekteki mum', value: fmtInt(p.candles_cached), hint: `${fmtInt(p.symbols_cached)} hisse · ${fmtInt(p.frames_cached)} seri` },
+    { label: 'Artımlı / tam çekim', value: `${fmtInt(p.delta_fetches)} / ${fmtInt(p.full_fetches)}`, hint: `${fmtInt(p.derived)} seri yeniden örneklemeyle türetildi` },
+    { label: 'Fiyat anlık görüntüsü', value: fmtInt(p.cached_quotes), hint: p.last_quote_refresh ? `güncelleme: ${relativeTime(new Date(p.last_quote_refresh * 1000).toISOString())}` : 'henüz yok' },
+    { label: 'Sınır aşımı (429)', value: fmtInt(p.rate_limited), hint: p.breaker_open ? `${p.breaker_seconds_left} sn bekleme` : 'devre kapalı' },
+  ];
+  return (
+    <Panel>
+      <PanelHeader
+        icon={Server}
+        title="Veri hattı"
+        subtitle={p.scan_running ? `Tarama sürüyor · ${p.scan_progress.done}/${p.scan_progress.total}` : 'Yahoo Finance istek bütçesi ve önbellek'}
+        accent={p.breaker_open ? 'amber' : 'blue'}
+      />
+      <div className="px-4 pt-4">
+        <div className="flex items-center justify-between font-data text-[11px] text-slate-500">
+          <span>Saatlik bütçe kullanımı</span>
+          <span className="text-slate-300">%{usage.toFixed(0)}</span>
+        </div>
+        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-800">
+          <span
+            className={`block h-full transition-[width] duration-700 ${usage > 80 ? 'bg-amber-400' : 'bg-blue-500'}`}
+            style={{ width: `${usage}%` }}
+          />
+        </div>
+      </div>
+      <dl className="grid grid-cols-2 gap-px p-4 sm:grid-cols-3">
+        {stats.map((s) => (
+          <div key={s.label} className="rounded-lg px-1 py-2">
+            <dt className="text-[11px] text-slate-500">{s.label}</dt>
+            <dd className="mt-1 font-data text-base font-semibold text-slate-100">{s.value}</dd>
+            <dd className="mt-0.5 text-[11px] text-slate-600">{s.hint}</dd>
+          </div>
+        ))}
+      </dl>
+    </Panel>
+  );
 }
 
 function ShortcutCard({
@@ -122,6 +188,7 @@ export default function OverviewSection({
   usersLoaded,
   overview,
   activeStocks,
+  pipeline,
   onNavigate,
 }: {
   firstName: string | null;
@@ -130,9 +197,10 @@ export default function OverviewSection({
   usersLoaded: boolean;
   overview: MarketOverviewResponse | null;
   activeStocks: number;
+  pipeline?: DataPipelineStats;
   onNavigate: (s: AdminSection) => void;
 }) {
-  const checks = buildChecks(rules, users, overview, usersLoaded);
+  const checks = buildChecks(rules, users, overview, usersLoaded, pipeline);
   const issues = checks.filter((c) => c.level !== 'ok').length;
   const activeRules = rules.filter((r) => r.is_active).length;
   const recent = users.slice(0, 5);
@@ -252,6 +320,8 @@ export default function OverviewSection({
           </button>
         </Panel>
       </div>
+
+      {pipeline && <PipelinePanel p={pipeline} />}
 
       <div className="grid gap-4 md:grid-cols-3">
         <ShortcutCard

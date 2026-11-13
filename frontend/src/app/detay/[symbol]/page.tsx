@@ -12,6 +12,7 @@ import AppFooter from '@/components/dashboard/AppFooter';
 import RuleRow from '@/components/dashboard/RuleRow';
 import { Segmented } from '@/components/dashboard/InstrumentPanel';
 import { Eyebrow, Panel, PanelHeader, formatPct, formatPrice } from '@/components/dashboard/Panel';
+import PriceStamp from '@/components/ui/PriceStamp';
 import { FundamentalsPanel, ReturnsStrip, RsiSnapshot, ScoreComposition, YearRange } from '@/components/detail/DetailBlocks';
 import { addToWatchlist, fetchMarketData, fetchWatchlist, removeFromWatchlist, type MarketData } from '@/services/api';
 import { useValueFlash } from '@/hooks/useValueFlash';
@@ -257,8 +258,15 @@ export default function StockDetailPage() {
                     <Eyebrow className="text-slate-500">Son fiyat</Eyebrow>
                     <span className="mt-2 font-data text-3xl font-semibold text-slate-50">₺{formatPrice(data!.current_price)}</span>
                     <span className={`mt-1 font-data text-xs ${up ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {up ? '▲' : '▼'} {formatPct(data!.change_pct)} <span className="text-slate-600">bugün</span>
+                      {up ? '▲' : '▼'} {formatPct(data!.change_pct)}
+                      {data!.prev_close ? <span className="text-slate-600"> · önceki kapanış ₺{formatPrice(data!.prev_close)}</span> : null}
                     </span>
+                    <PriceStamp
+                      priceTime={data!.price_time}
+                      state={data!.market_state}
+                      delayMinutes={data!.delay_minutes}
+                      className="mt-1.5"
+                    />
                   </div>
                   <div className="flex min-w-0 items-center gap-4 rounded-xl border border-slate-800/80 bg-[#0d1118] px-4 py-3">
                     <ScoreGauge score={score} size="lg" />

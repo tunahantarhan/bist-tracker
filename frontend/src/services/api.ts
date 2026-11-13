@@ -186,6 +186,12 @@ export interface MarketData {
   period?: string | null;
   current_price: number;
   change_pct: number;
+  /** Official previous session close the change is measured against */
+  prev_close?: number | null;
+  /** Unix seconds of the trade the price reflects (feed is delayed for BIST) */
+  price_time?: number | null;
+  delay_minutes?: number;
+  market_state?: MarketState;
   candles: Candle[];
   score?: number;
   primary_filter_passed?: boolean;
@@ -197,6 +203,8 @@ export interface MarketData {
   periodic_returns?: PeriodicReturnItem[];
   fundamentals?: StockFundamentals;
 }
+
+export type MarketState = 'open' | 'auction' | 'closed';
 
 export interface TickerItem {
   symbol: string;
@@ -211,6 +219,7 @@ export interface MacroItem {
   change_pct: number;
   prefix: string;
   suffix: string;
+  as_of?: number | null;
 }
 
 export interface StockOverviewItem {
@@ -231,6 +240,14 @@ export interface MarketOverviewResponse {
   primary_filter_timeframe?: string;
   /** Unix seconds of the scan that produced this payload */
   generated_at?: number;
+  /** `warming`: the very first scan is still running; items are partial */
+  status?: 'ready' | 'warming';
+  progress?: { done: number; total: number };
+  quotes_as_of?: number | null;
+  delay_minutes?: number;
+  market_state?: MarketState;
+  scan_seconds?: number;
+  universe_size?: number;
 }
 
 export interface AppNotification {
@@ -268,10 +285,37 @@ export interface UserProfile {
   last_login_at: string | null;
 }
 
+export interface DataPipelineStats {
+  calls_last_hour: number;
+  total_calls: number;
+  rate_limited: number;
+  failures: number;
+  breaker_open: boolean;
+  breaker_seconds_left: number;
+  last_rate_limit_at: number | null;
+  max_rps: number;
+  cached_quotes: number;
+  last_quote_refresh: number | null;
+  symbols_cached: number;
+  frames_cached: number;
+  candles_cached: number;
+  full_fetches: number;
+  delta_fetches: number;
+  derived: number;
+  l2_restores: number;
+  scan_running: boolean;
+  scan_progress: { done: number; total: number };
+  last_scan_seconds: number | null;
+  snapshot_generated_at: number | null;
+  snapshot_items: number;
+  memoised_symbols: number;
+}
+
 export interface AdminStats {
   total_users: number;
   active_stocks: number;
   active_rules: number;
+  data_pipeline?: DataPipelineStats;
 }
 
 export interface AdminUserItem {

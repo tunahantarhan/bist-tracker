@@ -50,6 +50,8 @@ export default function MarketPulse({ overview }: { overview: MarketOverviewResp
   }, []);
 
   const summary = overview ? summarizeScan(overview) : null;
+  const warming = overview?.status === 'warming';
+  const progress = overview?.progress;
   const total = summary ? Math.max(1, summary.scanned) : 1;
 
   return (
@@ -57,9 +59,16 @@ export default function MarketPulse({ overview }: { overview: MarketOverviewResp
       <div className="col-span-2 rounded-2xl border border-slate-800/80 bg-[#12161f] px-4 py-3.5">
         <div className="flex items-center justify-between gap-2">
           <Eyebrow className="text-slate-500">Son tarama</Eyebrow>
-          <span className="font-data text-[11px] text-slate-500">
-            {summary?.scannedAt ? formatIstanbulTime(summary.scannedAt) : '--:--'} · {summary ? tfLabel(summary.timeframe) : '…'} ana filtre
-          </span>
+          {warming ? (
+            <span className="flex items-center gap-1.5 font-data text-[11px] text-amber-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+              İlk tarama · {progress?.done ?? 0}/{progress?.total ?? '…'}
+            </span>
+          ) : (
+            <span className="font-data text-[11px] text-slate-500">
+              {summary?.scannedAt ? formatIstanbulTime(summary.scannedAt) : '--:--'} · {summary ? tfLabel(summary.timeframe) : '…'} ana filtre
+            </span>
+          )}
         </div>
 
         <div className="mt-2 flex items-baseline gap-5">
@@ -78,6 +87,12 @@ export default function MarketPulse({ overview }: { overview: MarketOverviewResp
             </div>
           ))}
         </div>
+
+        {warming && progress && progress.total > 0 && (
+          <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-slate-800" role="progressbar" aria-valuenow={progress.done} aria-valuemax={progress.total}>
+            <span className="block h-full bg-amber-400/70 transition-[width] duration-700" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+          </div>
+        )}
 
         {/* Score distribution as one stacked bar */}
         <div className="mt-3 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-800" role="img" aria-label="Skor dağılımı">

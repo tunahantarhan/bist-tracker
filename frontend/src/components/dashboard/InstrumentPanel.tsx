@@ -9,6 +9,7 @@ import type { MarketData } from '@/services/api';
 import { useValueFlash } from '@/hooks/useValueFlash';
 import { tfLabel } from '@/lib/timeframes';
 import { Eyebrow, Panel, formatPct, formatPrice } from './Panel';
+import PriceStamp from '@/components/ui/PriceStamp';
 
 export const CHART_INTERVALS = [
   { value: '5m', label: '5Dk' },
@@ -274,8 +275,14 @@ export default function InstrumentPanel({
                   ₺{formatPrice(data!.current_price)}
                 </span>
                 <span className={`mt-1 font-data text-xs ${up ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {up ? '▲' : '▼'} {formatPct(data!.change_pct)} <span className="hidden text-slate-600 sm:inline">· 15 dk gecikmeli</span>
+                  {up ? '▲' : '▼'} {formatPct(data!.change_pct)}
                 </span>
+                <PriceStamp
+                  priceTime={data!.price_time}
+                  state={data!.market_state}
+                  delayMinutes={data!.delay_minutes}
+                  className="mt-1"
+                />
               </>
             ) : (
               <span className="flex items-center gap-2 font-data text-xs text-slate-500">
