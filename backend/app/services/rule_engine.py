@@ -204,6 +204,24 @@ class RuleEngine:
         }
         return trend_series, meta
 
+    @staticmethod
+    def session_sma(close: pd.Series, sessions: int = 20) -> pd.Series:
+        """Moving average over the last `sessions` trading days of intraday bars: at every bar,
+        the mean close of all bars from the start of the session `sessions - 1` days back up to
+        and including this bar (e.g. "price above the 20-day average on the 5m chart").
+        NaN until `sessions` sessions of history exist."""
+        if close.empty:
+            return close.astype(float)
+        values = close.to_numpy(dtype=float)
+        codes = pd.factorize(close.index.normalize())[0]
+        session_start = np.searchsorted(codes, np.arange(codes.max() + 1))
+        start = session_start[np.maximum(codes - (sessions - 1), 0)]
+        csum = np.concatenate(([0.0], np.cumsum(values)))
+        idx = np.arange(len(values))
+        mean = (csum[idx + 1] - csum[start]) / (idx - start + 1)
+        mean[codes < sessions - 1] = np.nan
+        return pd.Series(mean, index=close.index)
+
     @classmethod
     def get_indicator_series(cls, df: pd.DataFrame, indicator: str, params: Dict[str, Any] | None) -> pd.Series | None:
         if df.empty or len(df) < 5:  # Need at least a few candles to compute anything
@@ -225,6 +243,9 @@ class RuleEngine:
         elif ind == "RSI_TRENDLINE":
             trend_series, _ = cls.calculate_rsi_downtrend_series(close, params)
             return trend_series
+
+        elif ind == "SMA_DAYS":  # average over N trading days of the rule's intraday bars
+            return cls.session_sma(close, int(params.get("days", params.get("length", 20))))
 
         elif ind in ["SMA", "MA"]:
             length = int(params.get("length", params.get("period", 50)))

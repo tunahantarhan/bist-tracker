@@ -74,9 +74,13 @@ async def dispatch_alerts(db: AsyncSession, overview: dict[str, Any], rules: lis
     # 1) System alerts for stocks passing the primary filter
     if primary:
         for item in overview.get("rsi_passed", []):
+            confirm = item.get("primary_confirm")
             msg = (
                 f"{item['symbol']} hissesi {_tf_label(primary.timeframe)} grafikte "
-                f"'{primary.name}' koşulunu sağladı. Güncel fiyat: ₺{item['current_price']:.2f}"
+                f"'{primary.name}' koşulunu sağladı"
+                + (f" ve fiyat {confirm['days']} günlük ortalamanın (₺{confirm['average']:.2f}) üstüne çıktı"
+                   if confirm and confirm.get("average") is not None else "")
+                + f". Güncel fiyat: ₺{item['current_price']:.2f}"
             )
             for user_id, email in active_users:
                 try:
@@ -87,6 +91,8 @@ async def dispatch_alerts(db: AsyncSession, overview: dict[str, Any], rules: lis
                         rule_id=primary.id,
                         user_email=email,
                         timeframe=primary.timeframe,
+                        # with the second step one signal per arming window, not one per candle
+                        cooldown_seconds=item.get("signal_ttl"),
                     ):
                         sent += 1
                 except Exception as e:

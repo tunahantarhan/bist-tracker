@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.core.default_rules import PRIMARY_TRENDLINE_PARAMS
-from app.core.market_hours import market_state
+from app.core.market_hours import market_state, now_tr, session_close_after
 from app.core.stock_catalog import STOCK_CATALOG
 from app.models.rule import Rule
 from app.models.universe import UniverseStock
@@ -79,6 +79,11 @@ OVERLAY_LABELS = {
     "BOLLINGER_LOWER": "BB Alt", "BB_LOWER": "BB Alt",
 }
 LINE_COLORS = ["#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f43f5e"]
+
+# Second step of the primary filter: after the RSI signal the stock is "armed"; it becomes a
+# signal once price closes above the N-day average of 5m bars within the waiting window.
+ARMED_STATE_KEY = "primary_armed_v1"
+CONFIRM_DEFAULTS = {"confirm_ma_days": 0, "confirm_window_sessions": 5}  # 0 days = step disabled
 
 _overview_lock = asyncio.Lock()
 _overview_memory: dict[str, Any] = {"data": None}
@@ -273,6 +278,93 @@ async def _evaluate_for_overview(
         return None
 
 
+def confirm_settings(primary: Any | None) -> tuple[int, int]:
+    """(average days, waiting window in sessions) of the primary filter's second step."""
+    params = {**CONFIRM_DEFAULTS, **((primary.indicator_2_params or {}) if primary else {})}
+    try:
+        return max(0, int(float(params["confirm_ma_days"] or 0))), max(0, int(float(params["confirm_window_sessions"] or 0)))
+    except (TypeError, ValueError):
+        return 0, 0
+
+
+async def intraday_day_average(symbol: str, days: int) -> float | None:
+    """Mean close of the 5m bars of the last `days` sessions (hourly bars if 5m history is
+    shorter, e.g. around long holidays: Yahoo keeps 5m bars for ~60 days, we load one month)."""
+    for interval, period in (("5m", "1mo"), ("1h", "6mo")):
+        try:
+            df = await provider.fetch_historical_data(symbol=symbol, interval=interval, period=period)
+        except Exception as e:
+            logger.debug("MA confirmation frame %s/%s unavailable: %s", symbol, interval, e)
+            continue
+        if df is None or df.empty:
+            continue
+        ma = RuleEngine.session_sma(df["Close"].dropna().astype(float), days)
+        if len(ma) and not np.isnan(ma.iloc[-1]):
+            return float(ma.iloc[-1])
+    return None
+
+
+async def _armed_state() -> dict[str, dict[str, Any]]:
+    state = await CacheService.get_json(ARMED_STATE_KEY) or {}
+    now = time.time()
+    return {sym: a for sym, a in state.items() if a.get("deadline", 0) > now}
+
+
+async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any | None) -> None:
+    """Turns the RSI stage into the final primary filter result (in place).
+
+    `primary_rsi_passed` is the RSI breakout itself; it arms the stock for
+    `confirm_window_sessions` sessions. `primary_filter_passed` becomes True once price is
+    above the `confirm_ma_days`-day average (5m bars) while armed, and stays True for the
+    rest of the window (`signal_ttl` lets alerts fire once per arming).
+    """
+    days, window = confirm_settings(primary)
+    for item in items:
+        item["primary_rsi_passed"] = bool(item.get("primary_filter_passed"))
+    if primary is None or days <= 0:
+        return
+
+    state = await _armed_state()
+    now = time.time()
+    for item in items:
+        sym = item["symbol"]
+        arm = state.get(sym)
+        if item["primary_rsi_passed"] and arm is None:
+            arm = state[sym] = {
+                "armed_at": now,
+                "deadline": session_close_after(now_tr(), window).timestamp(),
+                "rsi_price": item.get("current_price"),
+            }
+        item["primary_filter_passed"] = False
+        if arm is None:
+            continue
+        ma = await intraday_day_average(sym, days)
+        if ma is not None and item.get("current_price") is not None and item["current_price"] > ma \
+                and not arm.get("confirmed_at"):
+            arm["confirmed_at"] = now
+        item["primary_filter_passed"] = bool(arm.get("confirmed_at"))
+        item["primary_confirm"] = {
+            "days": days, "average": round(ma, 4) if ma is not None else None,
+            "armed_at": arm["armed_at"], "deadline": arm["deadline"], "confirmed_at": arm.get("confirmed_at"),
+        }
+        item["signal_ttl"] = max(60, int(arm["deadline"] - now))
+    await CacheService.set_json(ARMED_STATE_KEY, state, expiration=(window + 4) * 86400)
+
+
+async def primary_confirmation_status(symbol: str, primary: Any | None) -> dict[str, Any] | None:
+    """Read-only view of the second step for the detail page (arming happens in scans)."""
+    days, _ = confirm_settings(primary)
+    if primary is None or days <= 0:
+        return None
+    arm = (await _armed_state()).get(symbol)
+    average = await intraday_day_average(symbol, days)
+    return {
+        "days": days, "average": round(average, 4) if average is not None else None,
+        "armed_at": arm["armed_at"] if arm else None, "deadline": arm["deadline"] if arm else None,
+        "confirmed_at": arm.get("confirmed_at") if arm else None,
+    }
+
+
 def _build_payload(items: list[dict[str, Any]], primary_tf: str, quotes: dict[str, Quote], **extra: Any) -> dict[str, Any]:
     return sanitize_for_json({
         "items": items,
@@ -324,6 +416,7 @@ async def compute_overview(db: AsyncSession) -> dict[str, Any]:
 
     results = await asyncio.gather(*[_guarded(s) for s in symbols])
     items = [r for r in results if r is not None]
+    await apply_primary_confirmation(items, primary)
     _scan_state["last_duration"] = round(time.time() - started, 1)
     _scan_state["partial"] = []
     return _build_payload(items, primary_tf, quotes, scan_seconds=_scan_state["last_duration"], universe_size=len(symbols))
@@ -629,10 +722,15 @@ async def get_symbol_detail(
     if chart_df.empty:
         return None
 
-    body, fundamentals = await asyncio.gather(
+    body, fundamentals, confirm = await asyncio.gather(
         asyncio.to_thread(_build_detail_body, chart_df, frames, rules),
         get_fundamentals(symbol, quote),
+        primary_confirmation_status(symbol, get_primary_rule(rules)),
     )
+    body["primary_rsi_passed"] = body["primary_filter_passed"]
+    if confirm is not None:  # second step enabled: the filter passes once the average is crossed
+        body["primary_filter_passed"] = bool(confirm["confirmed_at"])
+        body["primary_confirm"] = confirm
     price = price_of_record(quote, frames.get("1d"), chart_df)
 
     payload = sanitize_for_json({

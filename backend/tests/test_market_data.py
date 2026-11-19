@@ -270,6 +270,17 @@ def test_trendline_signal_expires_after_max_bars_since_break():
     assert not sig["valid"]
 
 
+def test_session_sma_averages_whole_trading_days():
+    from app.services.rule_engine import RuleEngine
+    idx = pd.DatetimeIndex([pd.Timestamp(f"2026-11-{d} {h}:00", tz=TZ) for d in (10, 11, 12) for h in (10, 14)])
+    close = pd.Series([1.0, 3.0, 5.0, 7.0, 9.0, 11.0], index=idx)
+    sma = RuleEngine.session_sma(close, sessions=2)
+    assert np.isnan(sma.iloc[0]) and np.isnan(sma.iloc[1])  # less than 2 sessions of history
+    assert sma.iloc[2] == pytest.approx((1 + 3 + 5) / 3)  # day 1 + first bar of day 2
+    assert sma.iloc[5] == pytest.approx((5 + 7 + 9 + 11) / 4)  # days 2-3 only
+
+
+
 def test_trendline_near_stage_fires_before_the_break():
     from app.services.rule_engine import RuleEngine
 

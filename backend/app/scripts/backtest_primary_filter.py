@@ -36,7 +36,9 @@ from app.core.default_rules import PRIMARY_TRENDLINE_PARAMS
 from app.models.rule import Rule
 from app.models.universe import UniverseStock
 from app.providers.yahoo_gateway import RateLimitedError, gateway
-from app.providers.yfinance_provider import _history_sync, align_scale_breaks, reconcile_session_closes, resample
+from app.providers.yfinance_provider import (
+    _history_sync, align_scale_breaks, four_hour_labels, reconcile_session_closes, resample,
+)
 from app.services.rule_engine import RuleEngine
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "backtest"
@@ -46,6 +48,7 @@ DEFAULT_THRESHOLDS = (55.0, 60.0, 62.5, 65.0, 70.0)
 LIQUID_TURNOVER_TL = 50_000_000  # median daily turnover (close x volume) over 20 sessions
 DATA_INTEGRITY_GAP = math.log(1.15)  # entry vs same-session daily close (price limit is 10%)
 skipped_bad_data = [0]
+MA_SESSIONS = 20  # second step: price above the 20-day average
 TARGET_GAIN_PCT = 2.0  # "did it rise 2% within 5 sessions?" (consultant's informal yardstick)
 
 
@@ -126,6 +129,7 @@ def peak_and_breakout(close: pd.Series, rule: PrimaryRule) -> pd.DataFrame:
     warmup = rule.length + 20
     peak = np.full(len(values), np.nan)
     breakout = np.zeros(len(values), dtype=bool)
+    stage = np.full(len(values), "", dtype=object)
     for t in range(warmup, len(values)):
         prefix = values[: t + 1]  # RSI (Wilder RMA) is causal: prefix values equal a fresh computation
         try:
@@ -134,7 +138,29 @@ def peak_and_breakout(close: pd.Series, rule: PrimaryRule) -> pd.DataFrame:
             continue
         peak[t] = sig["y1"]
         breakout[t] = sig["valid"]
-    return pd.DataFrame({"peak": peak, "breakout": breakout}, index=close.index)
+        stage[t] = sig["stage"] or ""
+    return pd.DataFrame({"peak": peak, "breakout": breakout, "stage": stage}, index=close.index)
+
+
+def ma_confirmed_entry(
+    hourly_close: pd.Series, hourly_ma: pd.Series, bar_end_pos: int, window_sessions: int
+) -> int | None:
+    """Second step after an RSI signal: the first hourly bar from the signal bar's last hour
+    on, within `window_sessions` sessions, whose close is above the 20-day average (live
+    checks 5m bars; hourly bars give practically the same average). Returns its position."""
+    days = hourly_close.index.normalize()
+    last_day = days[bar_end_pos]
+    session_days = days.unique()
+    k = session_days.searchsorted(last_day) + window_sessions
+    limit_day = session_days[min(k, len(session_days) - 1)]
+    close = hourly_close.to_numpy(dtype=float)
+    ma = hourly_ma.to_numpy(dtype=float)
+    for j in range(bar_end_pos, len(close)):
+        if days[j] > limit_day:
+            break
+        if not np.isnan(ma[j]) and close[j] > ma[j]:
+            return j
+    return None
 
 
 def onsets(met: np.ndarray, min_gap: int) -> list[int]:
@@ -178,7 +204,7 @@ def forward_metrics(
 
 def analyse_symbol(
     symbol: str, hourly: pd.DataFrame, daily: pd.DataFrame, bench: pd.Series,
-    rule: PrimaryRule, thresholds: list[float], min_gap: int,
+    rule: PrimaryRule, thresholds: list[float], min_gap: int, ma_window: int = 5,
 ) -> list[dict]:
     # same data hygiene as the live pipeline: split-adjustment alignment, closing-auction reconciliation
     daily, hourly, _ = align_scale_breaks(daily, hourly)
@@ -188,6 +214,11 @@ def analyse_symbol(
         return []
     close = frame["Close"].astype(float)
     pb = peak_and_breakout(close, rule)
+    h_close = hourly["Close"].astype(float)
+    h_ma = RuleEngine.session_sma(h_close, MA_SESSIONS)
+    # position of every frame bar's last hourly bar
+    h_labels = four_hour_labels(hourly.index) if rule.timeframe == "4h" else hourly.index
+    bar_end = pd.Series(np.arange(len(hourly)), index=h_labels).groupby(level=0).last()
     daily_n = daily.copy()
     daily_n.index = daily_n.index.normalize()
     # previous sessions only, so the liquidity bucket uses no same-day information
@@ -197,25 +228,39 @@ def analyse_symbol(
     for thr in thresholds:
         met = (pb["breakout"] & (pb["peak"] >= thr)).to_numpy()
         for i in onsets(met, min_gap):
-            ts = frame.index[i]
-            entry = float(close.iloc[i])
-            metrics = forward_metrics(ts, entry, daily_n, bench)
-            if not metrics:
-                continue
-            day_close = daily_n["Close"].get(ts.normalize())
-            if day_close is None or abs(math.log(entry / day_close)) > DATA_INTEGRITY_GAP:
-                skipped_bad_data[0] += 1  # residual vendor data error: entry not on the daily scale
-                continue
-            day = ts.normalize()
-            rows.append({
-                "threshold": thr,
-                "symbol": symbol,
-                "time": ts.isoformat(),
-                "entry": round(entry, 4),
-                "peak_rsi": round(float(pb["peak"].iloc[i]), 2),
-                "turnover_tl": float(turnover.get(day, np.nan)) if day in turnover.index else None,
-                **metrics,
-            })
+            candidates = [("rsi", frame.index[i], float(close.iloc[i]))]
+            end_pos = bar_end.get(frame.index[i])
+            if end_pos is not None:
+                j = ma_confirmed_entry(h_close, h_ma, int(end_pos), ma_window)
+                if j is not None:
+                    candidates.append(("rsi+ma20", hourly.index[j], float(h_close.iloc[j])))
+            rows.extend(_signal_rows(symbol, thr, i, candidates, pb, daily_n, bench, turnover))
+    return rows
+
+
+def _signal_rows(symbol, thr, i, candidates, pb, daily_n, bench, turnover) -> list[dict]:
+    """One row per entry variant of signal bar `i` (RSI bar close, or the later MA20 confirmation)."""
+    rows = []
+    for variant, ts, entry in candidates:
+        metrics = forward_metrics(ts, entry, daily_n, bench)
+        if not metrics:
+            continue
+        day_close = daily_n["Close"].get(ts.normalize())
+        if day_close is None or abs(math.log(entry / day_close)) > DATA_INTEGRITY_GAP:
+            skipped_bad_data[0] += 1  # residual vendor data error: entry not on the daily scale
+            continue
+        day = ts.normalize()
+        rows.append({
+            "threshold": thr,
+            "symbol": symbol,
+            "time": ts.isoformat(),
+            "entry": round(entry, 4),
+            "peak_rsi": round(float(pb["peak"].iloc[i]), 2),
+            "stage": pb["stage"].iloc[i],
+            "variant": variant,
+            "turnover_tl": float(turnover.get(day, np.nan)) if day in turnover.index else None,
+            **metrics,
+        })
     return rows
 
 
@@ -226,8 +271,10 @@ def analyse_symbol(
 def summarise(df: pd.DataFrame, thresholds: list[float], sessions: int) -> list[dict]:
     out = []
     for thr in thresholds:
-        for scope, sub in (("Tümü", df[df.threshold == thr]),
-                           ("Likit", df[(df.threshold == thr) & (df.turnover_tl >= LIQUID_TURNOVER_TL)])):
+        t = df[df.threshold == thr]
+        rsi_only, with_ma = t[t.variant == "rsi"], t[t.variant == "rsi+ma20"]
+        for scope, sub in (("Tümü", rsi_only), ("Likit", rsi_only[rsi_only.turnover_tl >= LIQUID_TURNOVER_TL]),
+                           ("+MA20", with_ma), ("Likit +MA20", with_ma[with_ma.turnover_tl >= LIQUID_TURNOVER_TL])):
             row: dict = {"threshold": thr, "scope": scope, "signals": int(len(sub)),
                          "per_day": round(len(sub) / sessions, 2) if sessions else None,
                          "symbols": int(sub.symbol.nunique())}
@@ -269,6 +316,8 @@ async def main() -> None:
     parser.add_argument("--limit", type=int, default=0, help="only the first N symbols (smoke test)")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help="override a trendline parameter or the timeframe, e.g. confirm_bars=2")
+    parser.add_argument("--ma-window", type=int, default=5,
+                        help="sessions after the RSI signal in which price must close above the 20-day average")
     parser.add_argument("--out", default="", help="suffix for the output files (keeps several runs side by side)")
     args = parser.parse_args()
     thresholds = sorted(float(t) for t in args.thresholds.split(","))
@@ -296,7 +345,8 @@ async def main() -> None:
     rows: list[dict] = []
     first_bar, last_bar = None, None
     for i, (sym, (hourly, daily)) in enumerate(data.items(), 1):
-        rows.extend(await asyncio.to_thread(analyse_symbol, sym, hourly, daily, bench, rule, thresholds, args.min_gap_bars))
+        rows.extend(await asyncio.to_thread(analyse_symbol, sym, hourly, daily, bench, rule, thresholds,
+                                              args.min_gap_bars, args.ma_window))
         first_bar = min(first_bar or hourly.index[0], hourly.index[0])
         last_bar = max(last_bar or hourly.index[-1], hourly.index[-1])
         if i % 100 == 0:
@@ -313,7 +363,7 @@ async def main() -> None:
     df.to_csv(CACHE_DIR / f"signals{suffix}.csv", index=False)
     meta = {
         "rule": rule.__dict__, "thresholds": thresholds, "symbols": len(data), "sessions": sessions,
-        "period": [first_bar.isoformat(), last_bar.isoformat()], "min_gap_bars": args.min_gap_bars,
+        "period": [first_bar.isoformat(), last_bar.isoformat()], "min_gap_bars": args.min_gap_bars, "ma_window": args.ma_window,
         "liquid_turnover_tl": LIQUID_TURNOVER_TL, "target_gain_pct": TARGET_GAIN_PCT,
         "skipped_bad_data": skipped_bad_data[0],
     }

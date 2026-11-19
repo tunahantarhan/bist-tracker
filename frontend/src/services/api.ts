@@ -134,6 +134,15 @@ export interface TrendChecks {
   near?: boolean;
 }
 
+/** Second step of the primary filter: price above the N-day average of 5m bars after the RSI signal */
+export interface PrimaryConfirm {
+  days: number;
+  average: number | null;
+  armed_at: number | null;
+  deadline: number | null;
+  confirmed_at: number | null;
+}
+
 export interface RuleBreakdownItem {
   id: number;
   name: string;
@@ -219,6 +228,9 @@ export interface MarketData {
   candles: Candle[];
   score?: number;
   primary_filter_passed?: boolean;
+  /** RSI step alone (the filter itself may wait for the average, see `primary_confirm`) */
+  primary_rsi_passed?: boolean;
+  primary_confirm?: PrimaryConfirm | null;
   primary_filter_timeframe?: string;
   has_primary_filter?: boolean;
   rules_breakdown?: RuleBreakdownItem[];
@@ -253,6 +265,8 @@ export interface StockOverviewItem {
   change_pct: number;
   score: number;
   primary_filter_passed: boolean;
+  primary_rsi_passed?: boolean;
+  primary_confirm?: PrimaryConfirm | null;
   has_primary_filter: boolean;
 }
 

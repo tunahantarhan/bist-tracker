@@ -17,6 +17,7 @@ import { FundamentalsPanel, ReturnsStrip, RsiSnapshot, ScoreComposition, YearRan
 import { addToWatchlist, fetchMarketData, fetchWatchlist, removeFromWatchlist, type MarketData } from '@/services/api';
 import { useValueFlash } from '@/hooks/useValueFlash';
 import { tfLabel } from '@/lib/timeframes';
+import { PRIMARY_BADGE_TONES, primaryFilterBadge } from '@/lib/primaryFilter';
 
 // Each candle size comes with a sensible history length
 const TIMEFRAMES = [
@@ -206,13 +207,11 @@ export default function StockDetailPage() {
                     {data!.has_primary_filter && (
                       <span
                         className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-data text-[10px] uppercase tracking-wider ${
-                          data!.primary_filter_passed
-                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                            : 'border-slate-700 bg-slate-800/50 text-slate-400'
+                          PRIMARY_BADGE_TONES[primaryFilterBadge(data!).tone]
                         }`}
                       >
                         <Filter className="h-3 w-3" />
-                        {data!.primary_filter_passed ? 'Ana filtre geçti' : 'Ana filtre bekleniyor'} · {tfLabel(primaryTf)}
+                        {primaryFilterBadge(data!).label} · {tfLabel(primaryTf)}
                       </span>
                     )}
                     <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/50 px-2 py-1 font-data text-[10px] uppercase tracking-wider text-slate-400">

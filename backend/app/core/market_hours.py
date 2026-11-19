@@ -60,3 +60,18 @@ def market_state(at: datetime | None = None) -> str:
     if not is_bist_open(at):
         return "closed"
     return "auction" if at.time() >= CONTINUOUS_CLOSE else "open"
+
+
+def session_close_after(at: datetime, sessions: int) -> datetime:
+    """Close of the trading session `sessions` sessions after the one `at` falls on
+    (0 = the same day's close; weekends skipped, holidays not modelled)."""
+    at = at.astimezone(TR_TZ)
+    day = at.date()
+    while not _is_trading_day(datetime.combine(day, SESSION_OPEN, TR_TZ)):
+        day += timedelta(days=1)
+    left = sessions
+    while left > 0:
+        day += timedelta(days=1)
+        if _is_trading_day(datetime.combine(day, SESSION_OPEN, TR_TZ)):
+            left -= 1
+    return datetime.combine(day, SESSION_CLOSE, TR_TZ)

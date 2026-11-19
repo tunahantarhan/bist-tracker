@@ -53,11 +53,12 @@ class NotificationService:
         return last is not None and (time.time() - last) < self.get_cooldown_seconds(timeframe)
 
     async def set_cooldown(
-        self, user_id: int, symbol: str, timeframe: Optional[str] = None, rule_id: Optional[int] = None
+        self, user_id: int, symbol: str, timeframe: Optional[str] = None, rule_id: Optional[int] = None,
+        seconds: Optional[int] = None,
     ) -> None:
         key = self._cooldown_key(user_id, symbol, rule_id)
         _LOCAL_COOLDOWN[key] = time.time()
-        await CacheService.set_json(key, {"locked": True}, expiration=self.get_cooldown_seconds(timeframe))
+        await CacheService.set_json(key, {"locked": True}, expiration=seconds or self.get_cooldown_seconds(timeframe))
 
     async def trigger_notification(
         self,
@@ -68,12 +69,13 @@ class NotificationService:
         user_email: Optional[str] = None,
         force: bool = False,
         timeframe: Optional[str] = None,
+        cooldown_seconds: Optional[int] = None,
     ) -> Optional[Notification]:
         clean_sym = symbol.upper()
 
         if not force and await self.is_on_cooldown(user_id, clean_sym, timeframe, rule_id):
             return None
-        await self.set_cooldown(user_id, clean_sym, timeframe, rule_id)
+        await self.set_cooldown(user_id, clean_sym, timeframe, rule_id, cooldown_seconds)
 
         notification = Notification(
             user_id=user_id,

@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import { createRule, updateRule } from '@/services/api';
 import { AlertTriangle, Check, Plus, Sparkles, Flame, Sliders } from 'lucide-react';
-import { Rule } from '@/types';
+import { Rule, RuleParams } from '@/types';
 
 interface CreateRuleDialogProps {
   onRuleCreated?: () => void;
@@ -164,6 +164,13 @@ const getConditionLabel = (val: string) =>
 const getTargetTypeLabel = (val: string) =>
   TARGET_TYPES.find((t) => t.value === val)?.label || val;
 
+// Optional primary-filter parameters edited as plain number fields (empty = default)
+const TREND_EXTRA_KEYS = [
+  'min_slope', 'near_gap', 'max_rsi_dip', 'confirm_ma_days', 'confirm_window_sessions',
+] as const;
+type TrendExtraKey = (typeof TREND_EXTRA_KEYS)[number];
+const EMPTY_TREND_EXTRA = Object.fromEntries(TREND_EXTRA_KEYS.map((k) => [k, ''])) as Record<TrendExtraKey, string>;
+
 interface RuleFormValues {
   name: string;
   timeframe: string;
@@ -176,8 +183,9 @@ interface RuleFormValues {
   ind2Length: string;
   trendLookback: string;
   trendMinPeak: string;
-  trendSlope: string;
   trendMaxEnd: string;
+  /** Optional RSI_TRENDLINE parameters; empty = backend default (RuleEngine.TRENDLINE_DEFAULTS) */
+  trendExtra: Record<TrendExtraKey, string>;
   scoreImpact: string;
 }
 
@@ -193,8 +201,8 @@ const NEW_RULE_FORM: RuleFormValues = {
   ind2Length: '14',
   trendLookback: '60',
   trendMinPeak: '60',
-  trendSlope: '',
   trendMaxEnd: '30',
+  trendExtra: EMPTY_TREND_EXTRA,
   scoreImpact: '10.00',
 };
 
@@ -216,8 +224,8 @@ function getInitialForm(rule?: Rule | null): RuleFormValues {
     ind2Length: str(p2.length, '14'),
     trendLookback: str(p2.lookback, '60'),
     trendMinPeak: str(p2.min_peak, '60'),
-    trendSlope: str(p2.slope, ''),
     trendMaxEnd: str(p2.max_trend_end, '30'),
+    trendExtra: Object.fromEntries(TREND_EXTRA_KEYS.map((k) => [k, str(p2[k], '')])) as Record<TrendExtraKey, string>,
     scoreImpact: str(rule.score_impact, rule.is_primary_filter ? '25.00' : '10.00'),
   };
 }
@@ -260,8 +268,9 @@ export default function CreateRuleDialog({
   // Trendline parameters specifically for the primary filter (Defaults: 60 lookback, 60 min_peak, 30 max_trend_end)
   const [trendLookback, setTrendLookback] = useState('60');
   const [trendMinPeak, setTrendMinPeak] = useState('60');
-  const [trendSlope, setTrendSlope] = useState('');
   const [trendMaxEnd, setTrendMaxEnd] = useState('30');
+  const [trendExtra, setTrendExtra] = useState<Record<TrendExtraKey, string>>(EMPTY_TREND_EXTRA);
+  const setExtra = (key: TrendExtraKey, value: string) => setTrendExtra((prev) => ({ ...prev, [key]: value }));
 
   const [scoreImpact, setScoreImpact] = useState('25.00');
 
@@ -277,8 +286,8 @@ export default function CreateRuleDialog({
     setInd2Length(f.ind2Length);
     setTrendLookback(f.trendLookback);
     setTrendMinPeak(f.trendMinPeak);
-    setTrendSlope(f.trendSlope);
     setTrendMaxEnd(f.trendMaxEnd);
+    setTrendExtra(f.trendExtra);
     setScoreImpact(f.scoreImpact);
   };
 
@@ -327,14 +336,19 @@ export default function CreateRuleDialog({
     const len = parseInt(lengthVal, 10) || 14;
     if (ind === 'SMA' || ind === 'EMA' || ind === 'RSI') return { length: len };
     if (ind === 'RSI_TRENDLINE') {
-      const p: Record<string, number> = {
+      // keep parameters the form does not show (e.g. confirm_bars) instead of dropping them
+      const p: RuleParams = { ...(editingRule?.indicator_2_params ?? {}) };
+      delete p.slope; // legacy field, never used by the engine
+      Object.assign(p, {
         length: 14,
         lookback: parseInt(trendLookback, 10) || 60,
         min_peak: parseFloat(trendMinPeak) || 60.0,
         max_trend_end: parseFloat(trendMaxEnd) || 30.0,
-      };
-      if (trendSlope.trim() !== '' && !isNaN(parseFloat(trendSlope))) {
-        p.slope = parseFloat(trendSlope);
+      });
+      for (const key of TREND_EXTRA_KEYS) {
+        const v = parseFloat(trendExtra[key]);
+        if (trendExtra[key].trim() !== '' && !isNaN(v)) p[key] = v;
+        else delete p[key];
       }
       return p;
     }
@@ -544,7 +558,9 @@ export default function CreateRuleDialog({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[11px] text-amber-300 font-semibold font-sans">Maks. Dip RSI (0 - X)</Label>
+                  <Label className="text-[11px] text-amber-300 font-semibold font-sans" title="Kırılım anında trend çizgisinin değeri en fazla bu olmalı">
+                    Dip bölge (çizgi ≤)
+                  </Label>
                   <Input 
                     type="number" 
                     step="any" 
@@ -553,15 +569,48 @@ export default function CreateRuleDialog({
                     className="h-8 text-xs border-amber-500/50 bg-[#12161f] text-amber-300 font-bold" 
                   />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-[11px] text-slate-400 font-sans">Sabit Eğim</Label>
-                  <Input 
-                    type="number" 
-                    step="0.05" 
-                    value={trendSlope} 
-                    onChange={(e) => setTrendSlope(e.target.value)} 
-                    placeholder="Oto" 
-                    className="h-8 text-xs border-slate-700 bg-[#12161f] text-slate-100" 
+                <TrendExtraField
+                  label="Min. eğim"
+                  title="Çizgi mum başına en az bu kadar RSI puanı düşmeli (yatık, uzayan üçgenleri eler)"
+                  value={trendExtra.min_slope}
+                  onChange={(v) => setExtra('min_slope', v)}
+                  placeholder="Kapalı"
+                  step="0.05"
+                />
+                <TrendExtraField
+                  label="Kesmeye yakın (puan)"
+                  title="RSI yükselirken çizginin en fazla bu kadar puan altındaysa kırılımdan önce sinyal verir (0 = kapalı)"
+                  value={trendExtra.near_gap}
+                  onChange={(v) => setExtra('near_gap', v)}
+                  placeholder="5"
+                />
+                <TrendExtraField
+                  label="Maks. RSI dibi"
+                  title="İkinci tepeden sonra RSI'ın kendisi en az bu seviyeye inmiş olmalı"
+                  value={trendExtra.max_rsi_dip}
+                  onChange={(v) => setExtra('max_rsi_dip', v)}
+                  placeholder="Kapalı"
+                />
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-slate-700/60">
+                <div className="text-[11px] text-slate-300 font-sans font-semibold mb-2">
+                  İkinci adım: fiyat, 5 dk mumlarla N günlük ortalamanın üstüne çıkmalı
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono">
+                  <TrendExtraField
+                    label="Ortalama (gün)"
+                    title="RSI koşulundan sonra fiyat bu kadar günlük ortalamanın üstüne çıkınca sinyal gelir; boş = ikinci adım kapalı"
+                    value={trendExtra.confirm_ma_days}
+                    onChange={(v) => setExtra('confirm_ma_days', v)}
+                    placeholder="Kapalı"
+                  />
+                  <TrendExtraField
+                    label="Bekleme (seans)"
+                    title="RSI koşulundan sonra ortalamanın aşılması için beklenen seans sayısı"
+                    value={trendExtra.confirm_window_sessions}
+                    onChange={(v) => setExtra('confirm_window_sessions', v)}
+                    placeholder="5"
                   />
                 </div>
               </div>
@@ -776,5 +825,30 @@ export default function CreateRuleDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+function TrendExtraField({
+  label, title, value, onChange, placeholder, step = 'any',
+}: {
+  label: string;
+  title: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  step?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-[11px] text-slate-400 font-sans" title={title}>{label}</Label>
+      <Input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        title={title}
+        className="h-8 text-xs border-slate-700 bg-[#12161f] text-slate-100"
+      />
+    </div>
   );
 }
