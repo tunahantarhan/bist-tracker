@@ -45,11 +45,40 @@ function indicatorLabel(name?: string | null, params?: Params): string {
 
 const fmt = (v?: number | null) => (v === undefined || v === null || Number.isNaN(Number(v)) ? null : Number(v).toFixed(2));
 
+const isTrendlineRule = (rule: RuleBreakdownItem) => rule.indicator_2?.toUpperCase() === 'RSI_TRENDLINE';
+
 function Verdict({ ok }: { ok: boolean }) {
   return (
     <strong className={ok ? 'text-emerald-400' : 'text-rose-400/90'}>
       {ok ? 'Sağlanıyor' : 'Sağlanmıyor'}
     </strong>
+  );
+}
+
+function TrendlineChecks({ rule }: { rule: RuleBreakdownItem }) {
+  const c = rule.trend_checks!;
+  const p = rule.indicator_2_params ?? {};
+  const items: { ok: boolean; label: string }[] = [
+    { ok: c.peak, label: `Ana tepe ≥ ${p.min_peak ?? 55}${rule.peak_rsi != null ? ` (tepe ${fmt(rule.peak_rsi)})` : ''}` },
+    { ok: c.second_peak, label: 'Düşen trendi çizen ikinci tepe oluştu' },
+    { ok: c.rising_break, label: 'RSI çizgiyi yükselerek kesti' },
+    {
+      ok: c.low_break,
+      label: `Kırılım dip bölgede (çizgi ≤ ${p.max_trend_end ?? 30}${rule.line_at_break != null ? `, ${fmt(rule.line_at_break)}` : ''})`,
+    },
+    { ok: c.confirmed && c.fresh, label: `Kırılım onaylı ve taze${rule.break_bars_ago != null ? ` (${rule.break_bars_ago} mum önce)` : ''}` },
+  ];
+  // stop at the first failing check: later ones depend on it
+  const firstFail = items.findIndex((i) => !i.ok);
+  const shown = firstFail === -1 ? items : items.slice(0, firstFail + 1);
+  return (
+    <>
+      {shown.map((i) => (
+        <span key={i.label}>
+          {i.label}: <Verdict ok={i.ok} />
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -62,6 +91,17 @@ export default function RuleConditionText({ rule }: { rule: RuleBreakdownItem })
   const target = fmt(rule.target_value);
   if (cur === null || target === null) {
     return <span className="text-slate-500">Şart durumu izleniyor</span>;
+  }
+
+  if (isTrendlineRule(rule) && rule.trend_checks && !rule.trend_checks.second_peak) {
+    return (
+      <span className="inline-flex flex-col gap-0.5">
+        <span>
+          RSI <strong className="text-slate-200">{cur}</strong> · düşen trend çizgisi henüz yok
+        </span>
+        <TrendlineChecks rule={rule} />
+      </span>
+    );
   }
 
   const op = OPERATOR_TEXT[rule.condition || '>'] ?? rule.condition;
@@ -80,7 +120,8 @@ export default function RuleConditionText({ rule }: { rule: RuleBreakdownItem })
         {right && <>{right} </>}<strong className="text-slate-200">{target}</strong>
         {!isTrendline && <> → <Verdict ok={rule.is_met} /></>}
       </span>
-      {isTrendline && (
+      {isTrendline && rule.trend_checks && <TrendlineChecks rule={rule} />}
+      {isTrendline && !rule.trend_checks && (
         <>
           <span>
             Kırılım (RSI trendin üstünde): <Verdict ok={Number(rule.current_value) > Number(rule.target_value)} />

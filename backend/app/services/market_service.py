@@ -534,21 +534,39 @@ def _build_overlays(chart_df: pd.DataFrame, times: list[str], rules: Sequence[An
     return overlays
 
 
+def _trend_note(meta: dict[str, Any], p: dict[str, Any]) -> str:
+    """One-line state of the descending trendline for the chart legend."""
+    checks = meta.get("trend_checks") or {}
+    if meta.get("t2_x") is None:
+        if not checks.get("peak"):
+            return f"Son {p['lookback']} mumda {p['min_peak']:g} üstü RSI tepesi yok"
+        return "İkinci tepe oluşmadı, düşen trend yok"
+    ago = meta.get("break_bars_ago")
+    if ago is None:
+        return "Kırılım bekleniyor"
+    if not checks.get("rising_break") or not checks.get("low_break"):
+        return f"Çizginin üstünde ({ago} mum), geçerli kırılım değil"
+    return f"Kırıldı · {ago} mum önce" if checks.get("fresh") else f"Kırılım eskidi ({ago} mum önce)"
+
+
 def _build_rsi_pane(chart_df: pd.DataFrame, times: list[str], primary: Any | None) -> dict[str, Any]:
     params = dict(DEFAULT_TRENDLINE_PARAMS)
     if primary and primary.indicator_2_params:
         params.update(primary.indicator_2_params)
 
-    pane: dict[str, Any] = {"rsi": [], "trendline": [], "slope": None, "peak_rsi": None}
+    pane: dict[str, Any] = {"rsi": [], "trendline": [], "slope": None, "peak_rsi": None, "trend_note": None}
     try:
         closes = chart_df["Close"].astype(float)
         rsi = RuleEngine.get_indicator_series(chart_df, "RSI", {"length": int(params.get("length", 14))})
         trend, meta = RuleEngine.calculate_rsi_downtrend_series(closes, params)
+        # no line without a valid second peak; the drawn part stops where it reaches 0
+        drawn = trend.where(trend > 0) if meta.get("t2_x") is not None else trend.iloc[:0]
         pane.update(
             rsi=_series_points(times, rsi),
-            trendline=_series_points(times, trend),
+            trendline=_series_points(times, drawn),
             slope=meta.get("slope"),
             peak_rsi=meta.get("peak_rsi"),
+            trend_note=_trend_note(meta, RuleEngine.trendline_params(params)),
         )
     except Exception as e:
         logger.debug("RSI pane skipped: %s", e)

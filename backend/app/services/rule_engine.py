@@ -7,16 +7,45 @@ from typing import Dict, Any, Tuple, List
 logger = logging.getLogger(__name__)
 
 class RuleEngine:
+    # Defaults of the breakout definition; rules may override any of them in indicator_2_params.
+    TRENDLINE_DEFAULTS: Dict[str, float] = {
+        "length": 14,
+        "lookback": 60,
+        "min_peak": 55.0,          # main peak T1 must reach this RSI level
+        "max_trend_end": 30.0,     # the line must be at or below this level where RSI breaks it
+        "min_peak_gap": 5,         # bars between T1 and T2
+        "min_bounce": 5.0,         # T2 must be a real reaction high: RSI points above the low before it
+        "pivot_bars": 2,           # T2 is a swing high over this many bars on each side
+        "max_bars_since_break": 4, # the breakout must be this recent (bars), not an old state
+        "confirm_bars": 2,         # bars RSI has to stay above the line (break bar included)
+    }
+
+    @classmethod
+    def trendline_params(cls, params: Dict[str, Any] | None) -> Dict[str, float]:
+        merged = dict(cls.TRENDLINE_DEFAULTS)
+        for key, value in (params or {}).items():
+            if key == "rsi_length":
+                key = "length"
+            if key in merged and value is not None:
+                merged[key] = float(value)
+        for key in ("length", "lookback", "min_peak_gap", "pivot_bars", "max_bars_since_break", "confirm_bars"):
+            merged[key] = int(merged[key])
+        return merged
+
     @staticmethod
-    def trendline_geometry(rsi: np.ndarray, lookback: int) -> Tuple[int, float, float, int, float, bool]:
-        """Descending RSI trendline on the series `rsi[:n]` (only past values are used).
+    def trendline_geometry(
+        rsi: np.ndarray, lookback: int, min_peak_gap: int = 5, min_bounce: float = 5.0, pivot_bars: int = 2,
+    ) -> Tuple[int, float, float, int, float, bool]:
+        """Descending RSI resistance line on `rsi` (only the given, i.e. past, values are used).
 
         1. Main peak T1 = highest RSI in the lookback window (excluding the last 3 bars).
-        2. Among local peaks after T1 that are below it, the one giving the flattest
-           (max) slope defines the resistance line T1 -> T2; without local peaks, the
-           flattest line to any lower point is used.
-        3. An upward/undefined slope is replaced by a slightly falling invalid line.
+        2. T2 candidates are swing highs after T1: at least `min_peak_gap` bars later, lower
+           than T1, the highest point over `pivot_bars` bars on both sides, and at least
+           `min_bounce` RSI points above the lowest RSI between T1 and them (a reaction high,
+           not a flicker inside a slide).
+        3. The flattest T1 -> T2 line is the resistance: every candidate lies on or under it.
 
+        Without a valid T2 there is no line (`found_t2` False, slope -0.1 as a placeholder).
         Returns (x1, y1, slope, t2_x, t2_y, found_t2). Shared by live scoring and the
         walk-forward backtest so both use exactly the same definition.
         """
@@ -36,64 +65,106 @@ class RuleEngine:
         best_slope = -float("inf")
         found_t2 = False
         t2_x, t2_y = x1 + 1, y1
-
-        for idx in range(x1 + 2, n - 1):
+        running_low = np.inf
+        for idx in range(x1 + 1, n - pivot_bars):
             val = rsi[idx]
-            if val > rsi[idx - 1] and val > rsi[idx + 1] and val < y1:
-                s = (val - y1) / float(idx - x1)
-                if s > best_slope:
-                    best_slope, t2_x, t2_y, found_t2 = s, idx, float(val), True
-
-        if not found_t2:
-            for idx in range(x1 + 2, n - 1):
-                val = rsi[idx]
-                if val < y1:
+            if idx - x1 >= min_peak_gap and val < y1 and val - running_low >= min_bounce:
+                left = rsi[idx - pivot_bars:idx]
+                right = rsi[idx + 1:idx + 1 + pivot_bars]
+                if val >= np.nanmax(left) and val > np.nanmax(right):
                     s = (val - y1) / float(idx - x1)
                     if s > best_slope:
                         best_slope, t2_x, t2_y, found_t2 = s, idx, float(val), True
+            running_low = min(running_low, val)
 
         slope = best_slope if found_t2 and best_slope < 0 else -0.1
-        return x1, y1, float(slope), t2_x, t2_y, found_t2
+        return x1, y1, float(slope), t2_x, t2_y, bool(found_t2 and best_slope < 0)
 
-    @staticmethod
+    @classmethod
+    def trendline_signal(cls, rsi: np.ndarray, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        """Evaluates the breakout at the last bar of `rsi` and explains each check.
+
+        A breakout counts only if RSI itself rose through the line (a crossover bar where
+        RSI went up and ended above the line's previous level), not when a steep line slid
+        under a flat or falling RSI. It must have happened in the bottom region
+        (line <= `max_trend_end` at the crossing), recently (`max_bars_since_break`), and RSI
+        must still be above the line after `confirm_bars` bars.
+        """
+        p = cls.trendline_params(params)
+        n = len(rsi)
+        x1, y1, slope, t2_x, t2_y, found_t2 = cls.trendline_geometry(
+            rsi, p["lookback"], p["min_peak_gap"], p["min_bounce"], p["pivot_bars"]
+        )
+
+        def line(i: int) -> float:
+            return y1 + slope * (i - x1)
+
+        break_x = None
+        if found_t2:
+            for c in range(n - 1, t2_x, -1):
+                if not rsi[c] > line(c):
+                    break  # RSI is (back) under the line: no live breakout
+                if rsi[c - 1] <= line(c - 1):
+                    break_x = c
+                    break
+
+        line_at_break = line(break_x) if break_x is not None else None
+        bars_since = (n - 1 - break_x) if break_x is not None else None
+        checks = {
+            "peak": y1 >= p["min_peak"],
+            "second_peak": found_t2,
+            "rising_break": break_x is not None
+            and rsi[break_x] > rsi[break_x - 1]
+            and rsi[break_x] > line(break_x - 1),
+            "low_break": line_at_break is not None and 0.0 < line_at_break <= p["max_trend_end"],
+            "fresh": bars_since is not None and bars_since <= p["max_bars_since_break"],
+            "confirmed": bars_since is not None and bars_since + 1 >= p["confirm_bars"],
+        }
+        return {
+            "x1": x1, "y1": y1, "slope": slope, "t2_x": t2_x, "t2_y": t2_y if found_t2 else None,
+            "found_t2": found_t2, "break_x": break_x, "line_at_break": line_at_break,
+            "bars_since_break": bars_since, "checks": checks, "valid": all(checks.values()),
+        }
+
+    @classmethod
     def calculate_rsi_downtrend_series(
-        close: pd.Series, params: Dict[str, Any] | None = None
+        cls, close: pd.Series, params: Dict[str, Any] | None = None
     ) -> Tuple[pd.Series, Dict[str, Any]]:
-        """RSI descending trendline (see `trendline_geometry`) plus the qualification gates:
-        the main peak must reach `min_peak` and the line's tip must be at or below
-        `max_trend_end` (the line has fallen into the bottom region)."""
-        params = params or {}
-        rsi_length = int(params.get("length", params.get("rsi_length", 14)))
-        lookback = int(params.get("lookback", 60))
-        min_peak_rsi = float(params.get("min_peak", 55.0))
-        max_trend_end = float(params.get("max_trend_end", 30.0))
-
-        rsi = ta.rsi(close, length=rsi_length)
+        """RSI descending trendline (see `trendline_geometry`) plus the breakout checks of
+        `trendline_signal`; `peak_qualifies` is True only if every check passes."""
+        p = cls.trendline_params(params)
+        rsi = ta.rsi(close, length=p["length"])
         if rsi is None or len(rsi.dropna()) < 15:
             raise ValueError("Insufficient data to compute RSI trendline.")
 
         values = rsi.to_numpy(dtype=float)
         n = len(values)
-        x1, y1, slope, t2_x, t2_y, found_t2 = RuleEngine.trendline_geometry(values, lookback)
+        sig = cls.trendline_signal(values, p)
+        x1, y1, slope = sig["x1"], sig["y1"], sig["slope"]
 
         trend_values = np.full(n, np.nan)
-        trend_values[x1:] = np.clip(y1 + slope * np.arange(n - x1, dtype=float), 0.0, 100.0)
+        if sig["found_t2"]:
+            raw = y1 + slope * np.arange(n - x1, dtype=float)
+            # drawn down to 0 at most; the value used for the comparison is the last one
+            trend_values[x1:] = np.where(raw >= 0, raw, np.nan)
+            if np.isnan(trend_values[-1]):
+                trend_values[-1] = 0.0
+        else:
+            trend_values[-2:] = 100.0  # no resistance line yet: RSI cannot be "above" it
         trend_series = pd.Series(trend_values, index=rsi.index)
-
-        current_trend_val = trend_values[n - 1]
-
-        # Rule: The tip of the trend must have fallen into the defined bottom region (0-40)
-        is_low_enough = bool(current_trend_val <= max_trend_end)
 
         meta = {
             "peak_rsi": round(y1, 2),
-            "peak_qualifies": (y1 >= min_peak_rsi) and is_low_enough,
-            "slope": round(float(slope), 3),
+            "peak_qualifies": sig["valid"],
+            "slope": round(float(slope), 3) if sig["found_t2"] else None,
             "start_pos": x1,
             "end_pos": n - 1,
-            "t2_x": t2_x,
-            "t2_y": round(t2_y, 2) if found_t2 else None,
-            "current_trend_val": round(current_trend_val, 2)
+            "t2_x": sig["t2_x"] if sig["found_t2"] else None,
+            "t2_y": round(sig["t2_y"], 2) if sig["found_t2"] else None,
+            "current_trend_val": round(float(trend_values[-1]), 2),
+            "break_bars_ago": sig["bars_since_break"],
+            "line_at_break": round(sig["line_at_break"], 2) if sig["line_at_break"] is not None else None,
+            "trend_checks": sig["checks"],
         }
         return trend_series, meta
 
@@ -270,6 +341,9 @@ class RuleEngine:
                     "slope": meta.get("slope"),
                     "peak_rsi": meta.get("peak_rsi"),
                     "peak_qualifies": meta.get("peak_qualifies"),
+                    "trend_checks": meta.get("trend_checks"),
+                    "break_bars_ago": meta.get("break_bars_ago"),
+                    "line_at_break": meta.get("line_at_break"),
                 })
             except Exception as e:
                 if is_primary:

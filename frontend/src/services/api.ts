@@ -119,6 +119,15 @@ async function requestJson<T>(path: string, options: RequestInit = {}, errorMess
 // Types
 // ---------------------------------------------------------------------------
 
+export interface TrendChecks {
+  peak: boolean;
+  second_peak: boolean;
+  rising_break: boolean;
+  low_break: boolean;
+  fresh: boolean;
+  confirmed: boolean;
+}
+
 export interface RuleBreakdownItem {
   id: number;
   name: string;
@@ -140,6 +149,10 @@ export interface RuleBreakdownItem {
   slope?: number | null;
   peak_rsi?: number | null;
   peak_qualifies?: boolean | null;
+  /** RSI_TRENDLINE breakout checks (backend `RuleEngine.trendline_signal`) */
+  trend_checks?: TrendChecks | null;
+  break_bars_ago?: number | null;
+  line_at_break?: number | null;
   error?: string;
 }
 
@@ -154,6 +167,8 @@ export interface RsiPaneData {
   trendline: { time: string | number; value: number }[];
   slope?: number | null;
   peak_rsi?: number | null;
+  /** Why the line is or is not drawn, e.g. "İkinci tepe oluşmadı, düşen trend yok" */
+  trend_note?: string | null;
 }
 
 export interface Candle {

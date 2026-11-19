@@ -162,7 +162,8 @@ export default function ChartWrapper({
 
     if (rsiPane && refs.rsiSeries && refs.trendSeries) {
       if (rsiPane.rsi?.length > 0) refs.rsiSeries.setData(toSeriesData(rsiPane.rsi));
-      if (rsiPane.trendline?.length > 1) refs.trendSeries.setData(toSeriesData(rsiPane.trendline));
+      // clear the previous symbol's line when there is no descending trend
+      refs.trendSeries.setData(rsiPane.trendline?.length > 1 ? toSeriesData(rsiPane.trendline) : []);
     }
     // visibleKey captures every visibility change; isVisible itself is recreated each render
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -262,6 +263,7 @@ export default function ChartWrapper({
               <span className="h-2 w-2 rounded-full bg-blue-500" />
               <span>
                 Düşen Trend Çizgisi {rsiPane.slope ? `(Eğim: ${rsiPane.slope})` : ''}
+                {rsiPane.trend_note && <span className="text-slate-400"> · {rsiPane.trend_note}</span>}
               </span>
             </div>
           </div>

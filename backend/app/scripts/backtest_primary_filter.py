@@ -8,6 +8,7 @@ for several `min_peak` values at once. Each new signal is then followed for 1, 5
 
     python -m app.scripts.backtest_primary_filter                       # thresholds 55,60,62.5,65,70
     python -m app.scripts.backtest_primary_filter --thresholds 60,65 --refresh
+    python -m app.scripts.backtest_primary_filter --set confirm_bars=2 --set timeframe=1h
 
 Price data is downloaded once (through the shared rate limiter) and cached under
 `backend/.cache/backtest/`; reruns are offline. Outputs `signals.csv` and
@@ -51,9 +52,15 @@ TARGET_GAIN_PCT = 2.0  # "did it rise 2% within 5 sessions?" (consultant's infor
 @dataclass
 class PrimaryRule:
     timeframe: str
-    length: int
-    lookback: int
-    max_trend_end: float
+    params: dict  # full RSI_TRENDLINE parameters (RuleEngine.trendline_params)
+
+    @property
+    def length(self) -> int:
+        return int(self.params["length"])
+
+    @property
+    def lookback(self) -> int:
+        return int(self.params["lookback"])
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +90,7 @@ async def _download(symbol: str, refresh: bool) -> tuple[pd.DataFrame, pd.DataFr
     return hourly, daily
 
 
-async def load_universe_and_rule() -> tuple[list[str], PrimaryRule]:
+async def load_universe_and_rule(overrides: dict[str, str] | None = None) -> tuple[list[str], PrimaryRule]:
     async with AsyncSessionLocal() as db:
         symbols = list((await db.execute(
             select(UniverseStock.symbol).where(UniverseStock.is_active.is_(True)).order_by(UniverseStock.symbol)
@@ -96,13 +103,10 @@ async def load_universe_and_rule() -> tuple[list[str], PrimaryRule]:
     if primary is not None:
         params.update(primary.indicator_2_params or {})
         timeframe = primary.timeframe or timeframe
-    rule = PrimaryRule(
-        timeframe=timeframe,
-        length=int(params.get("length", 14)),
-        lookback=int(params.get("lookback", 80)),
-        max_trend_end=float(params.get("max_trend_end", 30.0)),
-    )
-    return symbols, rule
+    overrides = dict(overrides or {})
+    timeframe = overrides.pop("timeframe", timeframe)
+    params.update({k: float(v) for k, v in overrides.items()})
+    return symbols, PrimaryRule(timeframe=timeframe, params=RuleEngine.trendline_params(params))
 
 
 # ---------------------------------------------------------------------------
@@ -110,25 +114,26 @@ async def load_universe_and_rule() -> tuple[list[str], PrimaryRule]:
 # ---------------------------------------------------------------------------
 
 def peak_and_breakout(close: pd.Series, rule: PrimaryRule) -> pd.DataFrame:
-    """Per bar: the trendline's main peak (y1) and whether RSI is above a low-enough line.
+    """Per bar: the trendline's main peak (y1) and whether every other breakout check passes.
 
-    The `min_peak` gate is the only part that depends on the threshold, so the
-    (expensive) geometry is computed once per bar and every threshold is a cheap filter.
+    Uses `RuleEngine.trendline_signal`, i.e. exactly the live definition. The `min_peak`
+    gate is the only part that depends on the threshold, so the signal is computed once
+    per bar with that gate disabled and every threshold is a cheap filter afterwards.
     """
     rsi = ta.rsi(close, length=rule.length)
     values = rsi.to_numpy(dtype=float)
+    params = {**rule.params, "min_peak": 0.0}
     warmup = rule.length + 20
     peak = np.full(len(values), np.nan)
     breakout = np.zeros(len(values), dtype=bool)
     for t in range(warmup, len(values)):
         prefix = values[: t + 1]  # RSI (Wilder RMA) is causal: prefix values equal a fresh computation
         try:
-            x1, y1, slope, *_ = RuleEngine.trendline_geometry(prefix, rule.lookback)
+            sig = RuleEngine.trendline_signal(prefix, params)
         except ValueError:
             continue
-        tip = min(100.0, max(0.0, y1 + slope * (t - x1)))
-        peak[t] = y1
-        breakout[t] = bool(values[t] > tip and tip <= rule.max_trend_end)
+        peak[t] = sig["y1"]
+        breakout[t] = sig["valid"]
     return pd.DataFrame({"peak": peak, "breakout": breakout}, index=close.index)
 
 
@@ -262,11 +267,14 @@ async def main() -> None:
     parser.add_argument("--refresh", action="store_true", help="re-download cached price data")
     parser.add_argument("--min-gap-bars", type=int, default=8, help="ignore re-triggers within N bars (8 = 1 session on 1h)")
     parser.add_argument("--limit", type=int, default=0, help="only the first N symbols (smoke test)")
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                        help="override a trendline parameter or the timeframe, e.g. confirm_bars=2")
+    parser.add_argument("--out", default="", help="suffix for the output files (keeps several runs side by side)")
     args = parser.parse_args()
     thresholds = sorted(float(t) for t in args.thresholds.split(","))
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    symbols, rule = await load_universe_and_rule()
+    symbols, rule = await load_universe_and_rule(dict(kv.split("=", 1) for kv in args.set))
     if args.limit:
         symbols = symbols[: args.limit]
     print(f"Primary rule: {rule}; {len(symbols)} symbols; thresholds {thresholds}")
@@ -301,14 +309,15 @@ async def main() -> None:
     sessions = int(((bench.index >= first_bar.normalize()) & (bench.index <= last_bar.normalize())).sum())
     summary = summarise(df, thresholds, sessions)
 
-    df.to_csv(CACHE_DIR / "signals.csv", index=False)
+    suffix = f"_{args.out}" if args.out else ""
+    df.to_csv(CACHE_DIR / f"signals{suffix}.csv", index=False)
     meta = {
         "rule": rule.__dict__, "thresholds": thresholds, "symbols": len(data), "sessions": sessions,
         "period": [first_bar.isoformat(), last_bar.isoformat()], "min_gap_bars": args.min_gap_bars,
         "liquid_turnover_tl": LIQUID_TURNOVER_TL, "target_gain_pct": TARGET_GAIN_PCT,
         "skipped_bad_data": skipped_bad_data[0],
     }
-    (CACHE_DIR / "summary.json").write_text(json.dumps({"meta": meta, "summary": summary}, ensure_ascii=False, indent=2))
+    (CACHE_DIR / f"summary{suffix}.json").write_text(json.dumps({"meta": meta, "summary": summary}, ensure_ascii=False, indent=2))
 
     print(f"\nPeriod {first_bar:%Y-%m-%d} → {last_bar:%Y-%m-%d}, {sessions} sessions, {len(data)} symbols, "
           f"{skipped_bad_data[0]} signals dropped by the data-integrity check\n")

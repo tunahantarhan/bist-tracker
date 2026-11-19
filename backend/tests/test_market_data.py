@@ -220,3 +220,41 @@ def test_align_scale_breaks_ignores_normal_auction_moves():
     hourly["Close"] = daily["Close"].to_numpy() * np.array([1.0, 1.08, 0.93, 1.0])  # <=10% auction gaps
     _, _, fixes = align_scale_breaks(daily, hourly)
     assert fixes == 0
+
+
+# -- RSI trendline breakout ---------------------------------------------------
+
+def _rsi_path(*segments: tuple[float, float, int]) -> np.ndarray:
+    """Piecewise-linear RSI path: (from, to, bars) per segment."""
+    parts = [np.linspace(a, b, n, endpoint=False) for a, b, n in segments]
+    return np.concatenate(parts + [np.array([segments[-1][1]])])
+
+
+def test_trendline_rejects_a_steep_line_sliding_under_flat_rsi():
+    from app.services.rule_engine import RuleEngine
+
+    # peak 65, collapse to 31, a 1-point flicker, then RSI drifts sideways while the line dives
+    rsi = _rsi_path((50, 65, 10), (65, 31, 6), (31, 32, 2), (32, 31, 2), (31, 29, 12))
+    sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 60})
+    assert not sig["valid"]
+    assert not sig["checks"]["second_peak"]  # the flicker is not a reaction high
+
+
+def test_trendline_accepts_rsi_rising_through_a_low_line():
+    from app.services.rule_engine import RuleEngine
+
+    # peak 70, slide to 30, reaction high 45, slide to 22, then RSI climbs through the line
+    rsi = _rsi_path((50, 70, 8), (70, 30, 12), (30, 45, 5), (45, 22, 14), (22, 34, 3))
+    sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 60})
+    assert sig["checks"]["second_peak"] and sig["checks"]["rising_break"]
+    assert sig["line_at_break"] <= 30
+    assert sig["valid"], sig["checks"]
+
+
+def test_trendline_signal_expires_after_max_bars_since_break():
+    from app.services.rule_engine import RuleEngine
+
+    rsi = _rsi_path((50, 70, 8), (70, 30, 12), (30, 45, 5), (45, 22, 14), (22, 34, 3), (34, 40, 8))
+    sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 60})
+    assert sig["checks"]["rising_break"] and not sig["checks"]["fresh"]
+    assert not sig["valid"]

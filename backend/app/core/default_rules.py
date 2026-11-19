@@ -11,8 +11,9 @@ PRIMARY_TRENDLINE_PARAMS: dict = {"length": 14, "lookback": 80, "min_peak": 65.0
 DEFAULT_RULE_SUITE: list[dict] = [
     {
         "name": "1S RSI (14) Düşen Trend Kırılımı",
-        "description": "1 saatlik grafikte RSI(14), son 80 mumdaki düşen direnç çizgisinin üzerinde; "
-                       "çizginin başladığı tepe en az 65, çizginin ucu 30'un altında olmalı",
+        "description": "1 saatlik grafikte RSI(14), son 80 mumdaki düşen direnç çizgisini (tepe ≥ 65 ve sonraki "
+                       "tepki tepesi) dip bölgede (çizgi ≤ 30) yükselerek kesmeli; kırılım 2 mum onaylı ve en fazla "
+                       "4 mum önce olmalı",
         "timeframe": "1h",
         "is_primary_filter": True,
         "indicator_1": "RSI",
