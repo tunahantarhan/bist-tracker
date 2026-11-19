@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { KeyRound, Loader2, Search, Shield, UserCheck, UserX, Users } from 'lucide-react';
+import { KeyRound, Loader2, Mail, Search, Send, Shield, UserCheck, UserPlus, UserX, Users } from 'lucide-react';
 import type { AdminUserItem } from '@/services/api';
 import { Panel, PanelHeader } from '@/components/dashboard/Panel';
 import { relativeTime } from '@/lib/time';
@@ -72,22 +72,106 @@ function StatusPill({ active }: { active: boolean }) {
   );
 }
 
+export type InviteInput = { email: string; first_name: string; last_name: string };
+
+const INPUT =
+  'h-10 w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+
+/** Creates an account for someone else; they get the system alerts by e-mail and set a password from the invitation. */
+function InvitePanel({ onInvite }: { onInvite: (data: InviteInput) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<InviteInput>({ email: '', first_name: '', last_name: '' });
+  const [sending, setSending] = useState(false);
+  const valid = /\S+@\S+\.\S+/.test(form.email) && form.first_name.trim() && form.last_name.trim();
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valid || sending) return;
+    setSending(true);
+    const ok = await onInvite({ ...form, email: form.email.trim() });
+    setSending(false);
+    if (ok) {
+      setForm({ email: '', first_name: '', last_name: '' });
+      setOpen(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-200 transition-colors hover:bg-blue-500/20"
+      >
+        <UserPlus className="h-4 w-4" /> Kullanıcı davet et
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="rounded-2xl border border-slate-800/80 bg-[#12161f] p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <Mail className="mt-0.5 h-4 w-4 shrink-0 text-blue-300" />
+        <div>
+          <p className="text-sm font-medium text-slate-100">Kullanıcı davet et</p>
+          <p className="text-xs text-slate-500">
+            Hesap doğrulanmış olarak açılır; ana filtre bildirimleri hemen bu adrese gitmeye başlar. Kişi şifresini davet
+            e-postasındaki bağlantıdan belirler.
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-2 md:grid-cols-[1fr_1fr_1.4fr_auto]">
+        <input className={INPUT} placeholder="Ad" aria-label="Ad" value={form.first_name}
+          onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+        <input className={INPUT} placeholder="Soyad" aria-label="Soyad" value={form.last_name}
+          onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+        <input className={INPUT} type="email" placeholder="E-posta" aria-label="E-posta" value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setOpen(false)}
+            className="h-10 cursor-pointer rounded-lg px-3 text-sm text-slate-400 hover:text-slate-200">
+            Vazgeç
+          </button>
+          <button type="submit" disabled={!valid || sending}
+            className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Davet gönder
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
 function Actions({
   user,
   busy,
   isSelf,
   onToggleActive,
   onReset2fa,
+  onResendInvite,
 }: {
   user: AdminUserItem;
   busy: boolean;
   isSelf: boolean;
   onToggleActive: (u: AdminUserItem) => void;
   onReset2fa: (u: AdminUserItem) => void;
+  onResendInvite: (u: AdminUserItem) => void;
 }) {
   return (
     <div className="flex items-center justify-end gap-1">
       {busy && <Loader2 className="mr-1 h-4 w-4 animate-spin text-slate-500" />}
+      {!user.last_login_at && user.is_verified && user.is_active && !isSelf && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onResendInvite(user)}
+          title="Davet e-postasını yeniden gönder"
+          aria-label={`${user.email} için daveti yeniden gönder`}
+          className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-500/10 hover:text-blue-300 disabled:opacity-50"
+        >
+          <Send className="h-4 w-4" />
+        </button>
+      )}
       {user.is_admin && user.totp_enabled && !isSelf && (
         <button
           type="button"
@@ -126,6 +210,8 @@ export default function UsersSection({
   onTier,
   onToggleActive,
   onReset2fa,
+  onInvite,
+  onResendInvite,
 }: {
   users: AdminUserItem[];
   loading: boolean;
@@ -134,6 +220,8 @@ export default function UsersSection({
   onTier: (u: AdminUserItem, tier: AdminUserItem['tier']) => void;
   onToggleActive: (u: AdminUserItem) => void;
   onReset2fa: (u: AdminUserItem) => void;
+  onInvite: (data: InviteInput) => Promise<boolean>;
+  onResendInvite: (u: AdminUserItem) => void;
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
@@ -194,6 +282,8 @@ export default function UsersSection({
           </div>
         ))}
       </div>
+
+      <InvitePanel onInvite={onInvite} />
 
       <Panel>
         <PanelHeader icon={Users} title="Kullanıcı listesi" subtitle="Paket, erişim ve güvenlik durumu" accent="emerald" count={visible.length} />
@@ -257,7 +347,7 @@ export default function UsersSection({
                   <Badges user={u} />
                   <div className="flex items-center gap-2">
                     {tierSelect(u, 'min-w-0 flex-1')}
-                    <Actions user={u} busy={busyId === u.id} isSelf={isSelf(u)} onToggleActive={onToggleActive} onReset2fa={onReset2fa} />
+                    <Actions user={u} busy={busyId === u.id} isSelf={isSelf(u)} onToggleActive={onToggleActive} onReset2fa={onReset2fa} onResendInvite={onResendInvite} />
                   </div>
                   <p className="font-data text-[11px] text-slate-600">
                     Son giriş: {relativeTime(u.last_login_at)} · Kayıt: {u.created_at}
@@ -306,7 +396,7 @@ export default function UsersSection({
                         <StatusPill active={u.is_active} />
                       </td>
                       <td className="px-4 py-3">
-                        <Actions user={u} busy={busyId === u.id} isSelf={isSelf(u)} onToggleActive={onToggleActive} onReset2fa={onReset2fa} />
+                        <Actions user={u} busy={busyId === u.id} isSelf={isSelf(u)} onToggleActive={onToggleActive} onReset2fa={onReset2fa} onResendInvite={onResendInvite} />
                       </td>
                     </tr>
                   ))}

@@ -8,7 +8,7 @@ import AdminShell, { SECTION_HASH, sectionFromHash, type AdminSection } from '@/
 import { FeedbackProvider, useFeedback } from '@/components/ui/feedback';
 import OverviewSection from '@/components/admin/OverviewSection';
 import { PrimaryFilterCard, RulePreview, ScoringRules, WeightBalance } from '@/components/admin/RulesSection';
-import UsersSection from '@/components/admin/UsersSection';
+import UsersSection, { type InviteInput } from '@/components/admin/UsersSection';
 import UniverseSection from '@/components/admin/UniverseSection';
 import {
   deleteRule,
@@ -21,6 +21,8 @@ import {
   fetchRules,
   fetchUniverse,
   resetAdminUser2fa,
+  inviteAdminUser,
+  resendAdminInvite,
   seedDefaultRules,
   updateActiveUniverse,
   updateAdminUser,
@@ -219,6 +221,30 @@ function AdminConsole() {
     }
   };
 
+  const handleInvite = async (data: InviteInput): Promise<boolean> => {
+    try {
+      const res = await inviteAdminUser(data);
+      setUsers((prev) => [res.user, ...prev]);
+      toast(`${res.user.email} davet edildi; bildirimler bu adrese de gidecek.`);
+      return true;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Kullanıcı davet edilemedi.', 'error');
+      return false;
+    }
+  };
+
+  const handleResendInvite = async (user: AdminUserItem) => {
+    setBusyUserId(user.id);
+    try {
+      await resendAdminInvite(user.id);
+      toast(`Davet e-postası ${user.email} adresine yeniden gönderildi.`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Davet e-postası gönderilemedi.', 'error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
   const handleReset2fa = async (user: AdminUserItem) => {
     const ok = await confirm({
       title: 'İki adımlı doğrulama sıfırlansın mı?',
@@ -346,6 +372,8 @@ function AdminConsole() {
             onTier={handleTier}
             onToggleActive={handleToggleActive}
             onReset2fa={handleReset2fa}
+            onInvite={handleInvite}
+            onResendInvite={handleResendInvite}
           />
         )}
 

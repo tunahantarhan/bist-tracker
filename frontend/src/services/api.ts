@@ -610,6 +610,16 @@ export async function updateAdminUser(
   return requestJson(`/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify(data) }, 'Kullanıcı güncellenemedi');
 }
 
+export async function inviteAdminUser(
+  data: { email: string; first_name: string; last_name: string }
+): Promise<{ status: string; user: AdminUserItem }> {
+  return requestJson('/admin/users', { method: 'POST', body: JSON.stringify(data) }, 'Kullanıcı davet edilemedi');
+}
+
+export async function resendAdminInvite(userId: number): Promise<{ status: string }> {
+  return requestJson(`/admin/users/${userId}/resend-invite`, { method: 'POST' }, 'Davet e-postası gönderilemedi');
+}
+
 export async function resetAdminUser2fa(userId: number): Promise<{ status: string; user: AdminUserItem }> {
   return requestJson(`/admin/users/${userId}/reset-2fa`, { method: 'POST' }, 'İki adımlı doğrulama sıfırlanamadı');
 }

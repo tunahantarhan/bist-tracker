@@ -37,6 +37,16 @@ def create_password_reset_token(user: User) -> str:
     )
 
 
+def create_invite_token(user: User) -> str:
+    """A password-reset token with a longer life: single-use through the same fingerprint."""
+    return create_token(
+        user.id,
+        PASSWORD_RESET_TOKEN_TYPE,
+        timedelta(hours=settings.INVITE_TOKEN_EXPIRE_HOURS),
+        pwd=password_fingerprint(user.hashed_password),
+    )
+
+
 def _layout(title: str, intro: str, button_label: str, link: str, footnote: str) -> str:
     brand = escape(settings.PROJECT_NAME)
     return f"""\
@@ -104,6 +114,22 @@ def password_reset_email(user: User) -> EmailJob:
         "Talebi siz yapmadıysanız şifreniz değişmez, bu e-postayı yok sayabilirsiniz.",
     )
     return user.email, "Şifre sıfırlama", html, link
+
+
+def invite_email(user: User) -> EmailJob:
+    link = f"{settings.FRONTEND_URL}/sifre-sifirla?token={create_invite_token(user)}"
+    name = escape(user.first_name or "")
+    brand = escape(settings.PROJECT_NAME)
+    html = _layout(
+        title=f"{brand} hesabınız oluşturuldu",
+        intro=f"Merhaba {name}, sizin için bir {brand} hesabı açıldı. Ana filtreyi geçen hisseler için "
+        "bildirimler bu adrese gönderilecek. Siteye giriş yapmak için aşağıdaki butondan şifrenizi belirleyin.",
+        button_label="Şifremi Belirle",
+        link=link,
+        footnote=f"Bu bağlantı {settings.INVITE_TOKEN_EXPIRE_HOURS} saat geçerlidir; süresi dolarsa giriş ekranındaki "
+        "\"Şifremi unuttum\" bağlantısıyla yenisini alabilirsiniz. Bildirim almak istemiyorsanız yöneticinize bildirin.",
+    )
+    return user.email, f"{settings.PROJECT_NAME} hesabınız oluşturuldu", html, link
 
 
 def mark_login(user: User, ip: str) -> None:

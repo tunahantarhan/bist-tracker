@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     ADMIN_REFRESH_TOKEN_EXPIRE_HOURS: int = 12
     EMAIL_VERIFY_TOKEN_EXPIRE_HOURS: int = 24
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # Set-password link in invitations sent from the admin panel
+    INVITE_TOKEN_EXPIRE_HOURS: int = 72
     # Window between a correct admin password and the 2FA code
     MFA_PENDING_TOKEN_EXPIRE_MINUTES: int = 5
 

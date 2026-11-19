@@ -155,6 +155,20 @@ class TokenRefreshRequest(BaseModel):
     refresh_token: str
 
 
+class AdminUserInvite(UserBase):
+    """Account created by an admin; the person sets a password from the e-mailed link."""
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def strip_names(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Ad ve soyad boş bırakılamaz.")
+        return v
+
+
 class AdminUserUpdate(BaseModel):
     tier: str | None = None
     is_active: bool | None = None
