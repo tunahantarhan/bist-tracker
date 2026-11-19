@@ -58,16 +58,33 @@ function Verdict({ ok }: { ok: boolean }) {
 function TrendlineChecks({ rule }: { rule: RuleBreakdownItem }) {
   const c = rule.trend_checks!;
   const p = rule.indicator_2_params ?? {};
-  const items: { ok: boolean; label: string }[] = [
+  const base: { ok: boolean; label: string }[] = [
     { ok: c.peak, label: `Ana tepe ≥ ${p.min_peak ?? 55}${rule.peak_rsi != null ? ` (tepe ${fmt(rule.peak_rsi)})` : ''}` },
     { ok: c.second_peak, label: 'Düşen trendi çizen ikinci tepe oluştu' },
-    { ok: c.rising_break, label: 'RSI çizgiyi yükselerek kesti' },
+  ];
+  if (c.steep !== undefined && Number(p.min_slope ?? 0) > 0) {
+    base.push({ ok: c.steep, label: `Çizgi yeterince dik (mum başına ≥ ${p.min_slope} puan${rule.slope != null ? `, ${fmt(-rule.slope)}` : ''})` });
+  }
+  if (c.rsi_dip !== undefined && Number(p.max_rsi_dip ?? 100) < 100) {
+    base.push({ ok: c.rsi_dip, label: `RSI dibi ≤ ${p.max_rsi_dip}${rule.rsi_dip != null ? ` (dip ${fmt(rule.rsi_dip)})` : ''}` });
+  }
+  if (rule.stage === 'near') {
+    base.push({ ok: true, label: `Kesmeye yakın: RSI yükseliyor, çizginin ${fmt(rule.near_gap)} puan altında` });
+    return <ChecksList items={base} />;
+  }
+  const items: { ok: boolean; label: string }[] = [
+    ...base,
+    { ok: c.rising_break, label: `RSI çizgiyi yükselerek kesti${!c.rising_break && rule.near_gap != null && rule.near_gap > 0 ? ` (çizgiye ${fmt(rule.near_gap)} puan)` : ''}` },
     {
       ok: c.low_break,
       label: `Kırılım dip bölgede (çizgi ≤ ${p.max_trend_end ?? 30}${rule.line_at_break != null ? `, ${fmt(rule.line_at_break)}` : ''})`,
     },
     { ok: c.confirmed && c.fresh, label: `Kırılım onaylı ve taze${rule.break_bars_ago != null ? ` (${rule.break_bars_ago} mum önce)` : ''}` },
   ];
+  return <ChecksList items={items} />;
+}
+
+function ChecksList({ items }: { items: { ok: boolean; label: string }[] }) {
   // stop at the first failing check: later ones depend on it
   const firstFail = items.findIndex((i) => !i.ok);
   const shown = firstFail === -1 ? items : items.slice(0, firstFail + 1);

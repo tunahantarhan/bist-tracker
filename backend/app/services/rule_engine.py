@@ -14,10 +14,14 @@ class RuleEngine:
         "min_peak": 55.0,          # main peak T1 must reach this RSI level
         "max_trend_end": 30.0,     # the line must be at or below this level where RSI breaks it
         "min_peak_gap": 5,         # bars between T1 and T2
-        "min_bounce": 5.0,         # T2 must be a real reaction high: RSI points above the low before it
+        "min_bounce": 2.0,         # T2 must be a reaction high: RSI points above the low before it
         "pivot_bars": 2,           # T2 is a swing high over this many bars on each side
         "max_bars_since_break": 4, # the breakout must be this recent (bars), not an old state
         "confirm_bars": 2,         # bars RSI has to stay above the line (break bar included)
+        "min_slope": 0.0,          # the line must fall at least this many RSI points per bar (0 = off)
+        "max_rsi_dip": 100.0,      # RSI itself must have dipped to this level after T2 (100 = off)
+        "near_gap": 5.0,           # early signal: RSI rising and at most this many points under the line (0 = off)
+        "near_rise_bars": 2,       # bars RSI must have risen in a row for the early signal
     }
 
     @classmethod
@@ -28,7 +32,8 @@ class RuleEngine:
                 key = "length"
             if key in merged and value is not None:
                 merged[key] = float(value)
-        for key in ("length", "lookback", "min_peak_gap", "pivot_bars", "max_bars_since_break", "confirm_bars"):
+        for key in ("length", "lookback", "min_peak_gap", "pivot_bars", "max_bars_since_break", "confirm_bars",
+                    "near_rise_bars"):
             merged[key] = int(merged[key])
         return merged
 
@@ -82,13 +87,19 @@ class RuleEngine:
 
     @classmethod
     def trendline_signal(cls, rsi: np.ndarray, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        """Evaluates the breakout at the last bar of `rsi` and explains each check.
+        """Evaluates the signal at the last bar of `rsi` and explains each check.
 
-        A breakout counts only if RSI itself rose through the line (a crossover bar where
-        RSI went up and ended above the line's previous level), not when a steep line slid
-        under a flat or falling RSI. It must have happened in the bottom region
-        (line <= `max_trend_end` at the crossing), recently (`max_bars_since_break`), and RSI
-        must still be above the line after `confirm_bars` bars.
+        Breakout: RSI itself rose through the line (a crossover bar where RSI went up and
+        ended above the line's previous level), not a steep line sliding under a flat or
+        falling RSI. It must have happened in the bottom region (line <= `max_trend_end` at
+        the crossing), recently (`max_bars_since_break`), and RSI must still be above the
+        line after `confirm_bars` bars.
+
+        Early signal (`near_gap` > 0): no breakout yet, but RSI has risen for
+        `near_rise_bars` bars and is at most `near_gap` points under the line, which is in
+        the bottom region now. Either stage also needs a main peak >= `min_peak`, a second
+        peak, a line falling at least `min_slope` points per bar, and an RSI dip to
+        `max_rsi_dip` or below after T2. `stage` is "break", "near" or None.
         """
         p = cls.trendline_params(params)
         n = len(rsi)
@@ -110,9 +121,14 @@ class RuleEngine:
 
         line_at_break = line(break_x) if break_x is not None else None
         bars_since = (n - 1 - break_x) if break_x is not None else None
+        # the RSI low between T2 and the breakout (or now): Can's "alt bant"
+        dip_end = break_x if break_x is not None else n - 1
+        rsi_dip = float(np.nanmin(rsi[t2_x:dip_end + 1])) if found_t2 and dip_end >= t2_x else None
         checks = {
             "peak": y1 >= p["min_peak"],
             "second_peak": found_t2,
+            "steep": found_t2 and -slope >= p["min_slope"],
+            "rsi_dip": rsi_dip is not None and rsi_dip <= p["max_rsi_dip"],
             "rising_break": break_x is not None
             and rsi[break_x] > rsi[break_x - 1]
             and rsi[break_x] > line(break_x - 1),
@@ -120,10 +136,27 @@ class RuleEngine:
             "fresh": bars_since is not None and bars_since <= p["max_bars_since_break"],
             "confirmed": bars_since is not None and bars_since + 1 >= p["confirm_bars"],
         }
+        base = checks["peak"] and checks["second_peak"] and checks["steep"] and checks["rsi_dip"]
+        is_break = base and checks["rising_break"] and checks["low_break"] and checks["fresh"] and checks["confirmed"]
+
+        near_gap = None
+        is_near = False
+        if found_t2 and break_x is None and n > p["near_rise_bars"] + 1:
+            near_gap = line(n - 1) - float(rsi[n - 1])
+            if p["near_gap"] > 0:
+                k = p["near_rise_bars"]
+                rising = all(rsi[n - 1 - j] > rsi[n - 2 - j] for j in range(k))
+                is_near = (base and rising and 0.0 <= near_gap <= p["near_gap"]
+                           and 0.0 < line(n - 1) <= p["max_trend_end"])
+        if p["near_gap"] > 0:
+            checks["near"] = is_near
+
         return {
             "x1": x1, "y1": y1, "slope": slope, "t2_x": t2_x, "t2_y": t2_y if found_t2 else None,
             "found_t2": found_t2, "break_x": break_x, "line_at_break": line_at_break,
-            "bars_since_break": bars_since, "checks": checks, "valid": all(checks.values()),
+            "bars_since_break": bars_since, "rsi_dip": rsi_dip, "near_gap": near_gap,
+            "checks": checks, "stage": "break" if is_break else ("near" if is_near else None),
+            "valid": is_break or is_near,
         }
 
     @classmethod
@@ -165,6 +198,9 @@ class RuleEngine:
             "break_bars_ago": sig["bars_since_break"],
             "line_at_break": round(sig["line_at_break"], 2) if sig["line_at_break"] is not None else None,
             "trend_checks": sig["checks"],
+            "stage": sig["stage"],
+            "rsi_dip": round(sig["rsi_dip"], 2) if sig["rsi_dip"] is not None else None,
+            "near_gap": round(sig["near_gap"], 2) if sig["near_gap"] is not None else None,
         }
         return trend_series, meta
 
@@ -284,9 +320,13 @@ class RuleEngine:
         else:
             raise ValueError(f"Unsupported condition operator: {cond}")
 
-        # While evaluating RSI Trendline, check the both conditions
-        if extra_meta and not extra_meta.get("peak_qualifies", True):
-            is_met = False
+        # RSI trendline: an upward condition means the full signal definition (`trendline_signal`),
+        # which includes the early "near" stage where RSI is still just under the line
+        if extra_meta:
+            if cond in (">", ">=", "crosses_above"):
+                is_met = bool(extra_meta.get("peak_qualifies"))
+            elif not extra_meta.get("peak_qualifies", True):
+                is_met = False
 
         return is_met, round(curr_1, 2), round(curr_2, 2), extra_meta
 

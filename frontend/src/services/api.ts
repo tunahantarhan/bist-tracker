@@ -126,6 +126,12 @@ export interface TrendChecks {
   low_break: boolean;
   fresh: boolean;
   confirmed: boolean;
+  /** line falls at least `min_slope` points per bar */
+  steep?: boolean;
+  /** RSI itself dipped to `max_rsi_dip` after the second peak */
+  rsi_dip?: boolean;
+  /** early signal: RSI rising just under the line (only when `near_gap` > 0) */
+  near?: boolean;
 }
 
 export interface RuleBreakdownItem {
@@ -153,6 +159,9 @@ export interface RuleBreakdownItem {
   trend_checks?: TrendChecks | null;
   break_bars_ago?: number | null;
   line_at_break?: number | null;
+  stage?: 'break' | 'near' | null;
+  rsi_dip?: number | null;
+  near_gap?: number | null;
   error?: string;
 }
 

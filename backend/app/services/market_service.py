@@ -541,9 +541,16 @@ def _trend_note(meta: dict[str, Any], p: dict[str, Any]) -> str:
         if not checks.get("peak"):
             return f"Son {p['lookback']} mumda {p['min_peak']:g} üstü RSI tepesi yok"
         return "İkinci tepe oluşmadı, düşen trend yok"
+    if not checks.get("steep", True):
+        return f"Çizgi çok yatık (eğim {meta.get('slope')}, en az -{p['min_slope']:g})"
+    if meta.get("stage") == "near":
+        return f"Kesmeye yakın · çizginin {meta.get('near_gap')} puan altında, RSI yükseliyor"
     ago = meta.get("break_bars_ago")
     if ago is None:
-        return "Kırılım bekleniyor"
+        gap = meta.get("near_gap")
+        return f"Kırılım bekleniyor (çizgiye {gap:g} puan)" if gap is not None and gap > 0 else "Kırılım bekleniyor"
+    if not checks.get("rsi_dip", True):
+        return f"RSI dibi {meta.get('rsi_dip')} · en fazla {p['max_rsi_dip']:g} olmalı"
     if not checks.get("rising_break") or not checks.get("low_break"):
         return f"Çizginin üstünde ({ago} mum), geçerli kırılım değil"
     return f"Kırıldı · {ago} mum önce" if checks.get("fresh") else f"Kırılım eskidi ({ago} mum önce)"

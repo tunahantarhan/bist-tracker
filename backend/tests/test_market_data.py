@@ -269,3 +269,39 @@ def test_trendline_signal_expires_after_max_bars_since_break():
     assert sig["checks"]["rising_break"] and not sig["checks"]["fresh"]
     assert not sig["valid"]
 
+
+def test_trendline_near_stage_fires_before_the_break():
+    from app.services.rule_engine import RuleEngine
+
+    # same shape as the breakout case, but RSI is still rising just under the line
+    rsi = _rsi_path((50, 70, 8), (70, 30, 12), (30, 45, 5), (45, 20, 11), (20, 23, 2))
+    sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 60})
+    assert sig["stage"] == "near" and sig["valid"]
+    assert 0 < sig["near_gap"] <= 5 and sig["break_x"] is None
+    assert not RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 60, "near_gap": 0})["valid"]
+
+
+def test_trendline_rule_passes_on_the_signal_even_below_the_line(monkeypatch):
+    from types import SimpleNamespace
+    from app.services.rule_engine import RuleEngine
+
+    # near stage: RSI (here ~50) is under the line value (99), the rule still passes
+    monkeypatch.setattr(
+        RuleEngine, "calculate_rsi_downtrend_series",
+        classmethod(lambda cls, close, params: (pd.Series(np.full(len(close), 99.0)), {"peak_qualifies": True})),
+    )
+    rule = SimpleNamespace(indicator_1="RSI", indicator_1_params={"length": 14}, condition=">",
+                           target_type="indicator", static_value=None, indicator_2="RSI_TRENDLINE",
+                           indicator_2_params={})
+    close = pd.DataFrame({"Close": 100 + np.sin(np.arange(60)) * 3})
+    assert RuleEngine.evaluate_single_rule(close, rule)[0]
+
+
+def test_trendline_min_slope_rejects_a_flat_triangle():
+    from app.services.rule_engine import RuleEngine
+
+    # peak 66, a second peak 62 far later: a long, flat narrowing triangle
+    rsi = _rsi_path((50, 66, 8), (66, 50, 10), (50, 62, 25), (62, 45, 10), (45, 20, 10), (20, 30, 3))
+    sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 80, "min_slope": 0.5})
+    assert sig["checks"]["second_peak"] and not sig["checks"]["steep"]
+    assert not sig["valid"]
