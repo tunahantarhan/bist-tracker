@@ -57,14 +57,17 @@ async def dispatch_alerts(db: AsyncSession, overview: dict[str, Any], rules: lis
     rules_by_id = {r.id: r for r in rule_infos}
     primary = next((r for r in rule_infos if r.is_primary_filter), None)
 
-    users_res = await db.execute(select(User.id, User.email).where(User.is_active.is_(True)))
+    # unverified addresses never receive mail (anyone can register with someone else's address)
+    users_res = await db.execute(
+        select(User.id, User.email).where(User.is_active.is_(True), User.is_verified.is_(True))
+    )
     active_users = [(uid, email) for uid, email in users_res.all()]
 
     alerts_res = await db.execute(
         select(UserCustomAlert.id, UserCustomAlert.user_id, UserCustomAlert.symbol,
                UserCustomAlert.rule_id, UserCustomAlert.timeframe, User.email)
         .join(User, UserCustomAlert.user_id == User.id)
-        .where(UserCustomAlert.is_active.is_(True), User.is_active.is_(True))
+        .where(UserCustomAlert.is_active.is_(True), User.is_active.is_(True), User.is_verified.is_(True))
     )
     custom_alerts = alerts_res.all()
 
