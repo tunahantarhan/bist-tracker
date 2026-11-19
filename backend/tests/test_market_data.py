@@ -52,6 +52,16 @@ def test_resample_5m_to_1h_uses_yahoo_half_hour_bins():
     assert first["Volume"] == 7 * 10.0  # 09:55..10:25
 
 
+def test_resample_1h_to_4h_follows_bist_session_like_tradingview():
+    hourly = _bars("2026-11-12 09:30", 9, "1h")  # Yahoo hourly bars 09:30 .. 17:30
+    four = resample(hourly, "4h")
+    assert list(four.index.strftime("%H:%M")) == ["10:00", "14:00", "18:00"]
+    assert four.iloc[0]["Open"] == hourly.iloc[0]["Open"]
+    assert four.iloc[0]["Close"] == hourly.loc["2026-11-12 12:30", "Close"]  # 09:30..12:30
+    assert four.iloc[1]["Volume"] == 4 * 10.0  # 13:30..16:30
+    assert four.iloc[2]["Close"] == hourly.iloc[-1]["Close"]  # closing auction bar
+
+
 def test_resample_5m_to_15m_aggregates_ohlcv():
     five = _bars("2026-11-12 10:00", 6, "5min")
     q = resample(five, "15m")
@@ -258,3 +268,4 @@ def test_trendline_signal_expires_after_max_bars_since_break():
     sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 60})
     assert sig["checks"]["rising_break"] and not sig["checks"]["fresh"]
     assert not sig["valid"]
+

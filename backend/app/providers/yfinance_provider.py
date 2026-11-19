@@ -105,14 +105,35 @@ def _clean(df: pd.DataFrame | None) -> pd.DataFrame:
     return out[~out.index.duplicated(keep="last")].sort_index()
 
 
+# BIST 4h bars as TradingView draws them: 10:00-14:00, 14:00-18:00 and the 18:00 closing
+# auction. Yahoo's hourly bars start at :30, so the session is split at 13:30 and 17:30
+# (the 17:30 bar carries the reconciled official close). Minutes from midnight -> label.
+FOUR_HOUR_SESSION_SPLITS = ((17 * 60 + 30, 18 * 60), (13 * 60 + 30, 14 * 60), (0, 10 * 60))
+
+
+def four_hour_labels(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """The 4h bar (10:00 / 14:00 / 18:00) each intraday timestamp belongs to."""
+    minutes = index.hour * 60 + index.minute
+    label = np.full(len(index), FOUR_HOUR_SESSION_SPLITS[-1][1])
+    for start, lab in reversed(FOUR_HOUR_SESSION_SPLITS[:-1]):
+        label = np.where(minutes >= start, lab, label)
+    return index.normalize() + pd.to_timedelta(label, unit="m")
+
+
+def _resample_4h_session(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.groupby(four_hour_labels(df.index)).agg(AGG).dropna(subset=["Close"])
+    out.index.name = df.index.name
+    return out
+
+
 def resample(df: pd.DataFrame, interval: str) -> pd.DataFrame:
-    """Aggregates finer candles into `interval` bars aligned like Yahoo's own bars."""
+    """Aggregates finer candles into `interval` bars aligned like Yahoo's own bars
+    (4h: aligned to the BIST session like TradingView, see `FOUR_HOUR_SESSION_SPLITS`)."""
     if df.empty:
         return df
     if interval == "4h":
-        rule, offset = "4h", None
-    else:
-        rule, offset = RESAMPLE_RULE[interval]
+        return _resample_4h_session(df)
+    rule, offset = RESAMPLE_RULE[interval]
     return df.resample(rule, offset=offset).agg(AGG).dropna(subset=["Close"])
 
 
