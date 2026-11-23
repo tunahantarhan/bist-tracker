@@ -790,7 +790,7 @@ def _build_detail_body(
 
 
 async def get_symbol_detail(
-    db: AsyncSession, symbol: str, interval: str = "1h", period: str | None = None
+    db: AsyncSession, symbol: str, interval: str = "4h", period: str | None = None
 ) -> dict[str, Any] | None:
     symbol = symbol.upper()
     cache_key = f"bist_market_stock_{symbol}_{interval}_{period or 'default'}"

@@ -20,7 +20,7 @@ from app.services.market_service import (
 router = APIRouter(prefix="/market", tags=["Market"])
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{2,10}$")
-Interval = Query("1h", pattern="^(5m|15m|1h|4h|1d)$")
+Interval = Query("4h", pattern="^(5m|15m|1h|4h|1d)$")
 Period = Query(None, pattern="^(5d|1mo|3mo|6mo|1y|2y|5y)$")
 
 

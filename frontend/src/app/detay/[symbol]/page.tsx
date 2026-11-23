@@ -74,7 +74,13 @@ export default function StockDetailPage() {
   const router = useRouter();
   const symbol = ((params?.symbol as string) || '').toUpperCase();
 
-  const [timeframe, setTimeframe] = useState('1h');
+  // Opens on the primary filter's timeframe (like the dashboard) so the RSI pane matches the signal
+  const [timeframe, setTimeframeState] = useState('4h');
+  const timeframeTouchedRef = useRef(false);
+  const setTimeframe = (tf: string) => {
+    timeframeTouchedRef.current = true;
+    setTimeframeState(tf);
+  };
   const [rawData, setData] = useState<MarketData | null>(null);
   // Ignore a payload left over from the previously viewed symbol
   const data = rawData && rawData.symbol === symbol ? rawData : null;
@@ -101,7 +107,13 @@ export default function StockDetailPage() {
     const load = async () => {
       try {
         const result = await fetchMarketData(symbol, option.value, option.period);
-        if (!cancelled) setData(result);
+        if (cancelled) return;
+        setData(result);
+        // Follow the primary filter's timeframe until the user picks a candle size
+        const primaryTf = result?.primary_filter_timeframe;
+        if (!timeframeTouchedRef.current && primaryTf && primaryTf !== timeframe && TIMEFRAMES.some((t) => t.value === primaryTf)) {
+          setTimeframeState(primaryTf);
+        }
       } catch (err) {
         console.error('Hisse detay yükleme hatası:', err);
         if (!cancelled) setData(null);
