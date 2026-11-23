@@ -279,6 +279,29 @@ def test_session_sma_averages_whole_trading_days():
     assert sma.iloc[2] == pytest.approx((1 + 3 + 5) / 3)  # day 1 + first bar of day 2
     assert sma.iloc[5] == pytest.approx((5 + 7 + 9 + 11) / 4)  # days 2-3 only
 
+def test_align_to_chart_takes_the_value_at_each_bar_close():
+    from app.services.market_service import align_to_chart
+    fine = pd.Series(np.arange(12, dtype=float), index=pd.date_range("2026-11-10 10:00", periods=12, freq="5min", tz=TZ))
+    hourly = pd.DatetimeIndex([pd.Timestamp("2026-11-10 09:30", tz=TZ), pd.Timestamp("2026-11-10 10:30", tz=TZ)])
+    assert align_to_chart(fine, hourly, "1h").tolist() == [5.0, 11.0]  # 10:25 closes the 09:30 bar
+    daily = pd.DatetimeIndex([pd.Timestamp("2026-11-09", tz=TZ), pd.Timestamp("2026-11-10", tz=TZ)])
+    out = align_to_chart(fine, daily, "1d")
+    assert np.isnan(out.iloc[0]) and out.iloc[1] == 11.0
+    four = pd.DatetimeIndex([pd.Timestamp("2026-11-10 10:00", tz=TZ), pd.Timestamp("2026-11-10 14:00", tz=TZ)])
+    late = pd.Series([1.0, 2.0, 3.0], index=pd.DatetimeIndex(
+        [pd.Timestamp(f"2026-11-10 {t}", tz=TZ) for t in ("13:25", "13:30", "13:55")]))
+    assert align_to_chart(late, four, "4h").tolist() == [1.0, 3.0]  # 13:30 opens the 14:00 session bar
+
+
+def test_day_average_uses_5m_bars_and_fills_older_history_from_hourly():
+    from app.services.market_service import day_average_series
+    five = _bars("2026-11-10 10:00", 4, "5min")
+    hourly = _bars("2026-11-03 10:00", 200, "1h")
+    series = day_average_series({"5m": five, "1h": hourly}, "5m", 1)
+    assert series.index.is_monotonic_increasing and series.index.is_unique
+    assert series[series.index >= five.index[0]].tolist() == pytest.approx([100.0, 100.5, 101.0, 101.5])
+    assert series.index[0] == hourly.index[0]
+
 
 
 def test_trendline_near_stage_fires_before_the_break():

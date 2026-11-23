@@ -8,7 +8,7 @@ Condition = Literal[">", "<", ">=", "<=", "==", "crosses_above", "crosses_below"
 TargetType = Literal["static", "indicator"]
 
 SUPPORTED_INDICATORS = {
-    "PRICE", "RSI", "RSI_TRENDLINE", "SMA", "MA", "EMA",
+    "PRICE", "RSI", "RSI_TRENDLINE", "SMA", "MA", "EMA", "SMA_DAYS",
     "STOCH_RSI", "STOCH_RSI_K", "STOCH_RSI_D",
     "MACD", "MACD_LINE", "MACD_SIGNAL", "MACD_HIST",
     "BOLLINGER_UPPER", "BOLLINGER_MIDDLE", "BOLLINGER_LOWER",

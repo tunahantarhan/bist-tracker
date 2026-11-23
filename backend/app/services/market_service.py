@@ -36,7 +36,7 @@ from app.models.rule import Rule
 from app.models.universe import UniverseStock
 from app.providers.quotes import Quote, quote_book
 from app.providers.yahoo_gateway import background_lane
-from app.providers.yfinance_provider import YFinanceProvider
+from app.providers.yfinance_provider import YFinanceProvider, four_hour_labels
 from app.services.cache_service import CacheService
 from app.services.rule_engine import RuleEngine
 
@@ -78,6 +78,10 @@ OVERLAY_LABELS = {
     "BOLLINGER_MIDDLE": "BB Orta", "BB_MIDDLE": "BB Orta",
     "BOLLINGER_LOWER": "BB Alt", "BB_LOWER": "BB Alt",
 }
+# N-day average of intraday bars ("price above the 20-day average on the 5m chart")
+DAY_AVERAGE_INDICATOR = "SMA_DAYS"
+DAY_AVERAGE_COLOR = "#f97316"
+TF_LABELS = {"5m": "5dk", "15m": "15dk", "1h": "1s"}
 LINE_COLORS = ["#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f43f5e"]
 
 # Second step of the primary filter: after the RSI signal the stock is "armed"; it becomes a
@@ -152,6 +156,17 @@ def required_timeframes(rules: Sequence[Any]) -> set[str]:
     tfs.add("1d")  # daily candles drive periodic returns
     primary = get_primary_rule(rules)
     tfs.add(primary.timeframe if primary else DEFAULT_PRIMARY_TIMEFRAME)
+    return tfs
+
+
+def detail_timeframes(rules: Sequence[Any]) -> set[str]:
+    """Evaluation frames plus hourly bars for day-average lines (5m history is only ~1 month)."""
+    tfs = required_timeframes(rules)
+    uses_day_average = any(
+        DAY_AVERAGE_INDICATOR in ((r.indicator_1 or "").upper(), (r.indicator_2 or "").upper()) for r in rules
+    )
+    if uses_day_average:
+        tfs.add("1h")
     return tfs
 
 
@@ -596,8 +611,80 @@ def _series_points(times: list[str], series: pd.Series | None) -> list[dict[str,
     ]
 
 
-def _build_overlays(chart_df: pd.DataFrame, times: list[str], rules: Sequence[Any]) -> list[dict[str, Any]]:
+def align_to_chart(series: pd.Series, chart_index: pd.DatetimeIndex, interval: str) -> pd.Series:
+    """Value of a finer-grained series at the close of every chart bar (the last value that
+    falls inside the bar). Chart bars are labelled by their start, except BIST 4h session bars."""
+    series = series.dropna()
+    if series.empty or chart_index.empty:
+        return pd.Series(np.nan, index=chart_index)
+    daily_chart = bool((chart_index == chart_index.normalize()).all())
+    if interval == "4h" and not daily_chart:
+        labels = four_hour_labels(series.index)
+    else:
+        pos = chart_index.searchsorted(series.index, side="right") - 1
+        series = series[pos >= 0]
+        labels = chart_index[pos[pos >= 0]]
+    per_bar = series.groupby(labels).last()
+    return per_bar.reindex(chart_index)
+
+
+def day_average_series(frames: dict[str, pd.DataFrame], timeframe: str, days: int) -> pd.Series | None:
+    """N-day average of the rule's intraday closes. Yahoo keeps only ~1 month of 5m bars, so the
+    part before the first full N-day window is filled from hourly bars (same average, coarser)."""
+    parts: list[pd.Series] = []
+    for tf in dict.fromkeys((timeframe, "1h")):
+        df = frames.get(tf)
+        if tf not in ("5m", "15m", "1h") or df is None or df.empty:
+            continue
+        ma = RuleEngine.session_sma(df["Close"].dropna().astype(float), days).dropna()
+        if parts and not parts[0].empty:
+            ma = ma[ma.index < parts[0].index[0]]
+        parts.append(ma)
+    parts = [p for p in parts if not p.empty]
+    return pd.concat(parts).sort_index() if parts else None
+
+
+def _day_average_overlays(
+    chart_df: pd.DataFrame, times: list[str], rules: Sequence[Any], frames: dict[str, pd.DataFrame], interval: str
+) -> list[dict[str, Any]]:
     overlays: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for rule in rules:
+        pairs = [(rule.indicator_1, rule.indicator_1_params)]
+        if rule.target_type == "indicator" and rule.indicator_2:
+            pairs.append((rule.indicator_2, rule.indicator_2_params))
+        for name, params in pairs:
+            if (name or "").upper() != DAY_AVERAGE_INDICATOR:
+                continue
+            params = params or {}
+            days = int(params.get("days", params.get("length", 20)))
+            tf = rule.timeframe or "5m"
+            if (tf, days) in seen:
+                continue
+            seen.add((tf, days))
+            try:
+                series = day_average_series(frames, tf, days)
+                aligned = align_to_chart(series, chart_df.index, interval) if series is not None else None
+            except Exception as e:
+                logger.debug("Day average overlay %s/%s skipped: %s", tf, days, e)
+                continue
+            overlays.append({
+                "name": f"Ort. {days}G ({TF_LABELS.get(tf, tf)})",
+                "color": DAY_AVERAGE_COLOR,
+                "data": _series_points(times, aligned),
+            })
+    return overlays
+
+
+def _build_overlays(
+    chart_df: pd.DataFrame,
+    times: list[str],
+    rules: Sequence[Any],
+    frames: dict[str, pd.DataFrame] | None = None,
+    interval: str = "1d",
+) -> list[dict[str, Any]]:
+    # day averages first: they are the reference line of the primary filter's second step
+    overlays = _day_average_overlays(chart_df, times, rules, frames or {}, interval)
     seen: set[str] = set()
 
     for rule in rules:
@@ -673,7 +760,9 @@ def _build_rsi_pane(chart_df: pd.DataFrame, times: list[str], primary: Any | Non
     return pane
 
 
-def _build_detail_body(chart_df: pd.DataFrame, frames: dict[str, pd.DataFrame], rules: list[Any]) -> dict[str, Any]:
+def _build_detail_body(
+    chart_df: pd.DataFrame, frames: dict[str, pd.DataFrame], rules: list[Any], interval: str
+) -> dict[str, Any]:
     """CPU part of the detail payload (runs in a worker thread)."""
     df_reset = chart_df.reset_index()
     date_col = "Datetime" if "Datetime" in df_reset.columns else "Date"
@@ -694,7 +783,7 @@ def _build_detail_body(chart_df: pd.DataFrame, frames: dict[str, pd.DataFrame], 
         "primary_filter_timeframe": primary.timeframe if primary else DEFAULT_PRIMARY_TIMEFRAME,
         "has_primary_filter": evaluation["has_primary_filter"],
         "rules_breakdown": evaluation["rules_breakdown"],
-        "indicators": _build_overlays(chart_df, times, rules),
+        "indicators": _build_overlays(chart_df, times, rules, frames, interval),
         "rsi_pane": _build_rsi_pane(chart_df, times, primary),
         "periodic_returns": _periodic_returns(frames.get("1d")),
     }
@@ -713,7 +802,7 @@ async def get_symbol_detail(
     quote = (await quote_book.get_quotes([symbol])).get(symbol)  # refresh first: the chart overlays it
     chart_df, frames = await asyncio.gather(
         provider.fetch_historical_data(symbol=symbol, period=period, interval=interval),
-        load_evaluation_frames(symbol, required_timeframes(rules)),
+        load_evaluation_frames(symbol, detail_timeframes(rules)),
     )
 
     if chart_df is None or chart_df.empty:
@@ -723,7 +812,7 @@ async def get_symbol_detail(
         return None
 
     body, fundamentals, confirm = await asyncio.gather(
-        asyncio.to_thread(_build_detail_body, chart_df, frames, rules),
+        asyncio.to_thread(_build_detail_body, chart_df, frames, rules, interval),
         get_fundamentals(symbol, quote),
         primary_confirmation_status(symbol, get_primary_rule(rules)),
     )

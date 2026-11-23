@@ -6,6 +6,7 @@ const INDICATOR_LABELS: Record<string, string> = {
   SMA: 'MA',
   MA: 'MA',
   EMA: 'EMA',
+  SMA_DAYS: 'Gün ort.',
   STOCH_RSI: 'Stoch %K',
   STOCH_RSI_K: 'Stoch %K',
   STOCH_RSI_D: 'Stoch %D',

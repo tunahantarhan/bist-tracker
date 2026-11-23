@@ -51,6 +51,7 @@ const INDICATORS = [
   { value: 'RSI', label: 'RSI' },
   { value: 'SMA', label: 'MA (Basit Hareketli Ortalama)' },
   { value: 'EMA', label: 'EMA (Üssel Hareketli Ortalama)' },
+  { value: 'SMA_DAYS', label: 'Gün Ortalaması (gün içi mumlarla)' },
   { value: 'STOCH_RSI_K', label: 'Stoch RSI (%K)' },
   { value: 'STOCH_RSI_D', label: 'Stoch RSI (%D)' },
   { value: 'MACD_LINE', label: 'MACD Line' },
@@ -95,6 +96,7 @@ interface RuleTemplate {
 
 const RULE_TEMPLATES: RuleTemplate[] = [
   { name: 'Kısa Vade: MA(9) > MA(14) Trendi', timeframe: '15m', indicator1: 'SMA', ind1Length: '9', condition: '>', targetType: 'indicator', indicator2: 'SMA', ind2Length: '14', score: '10.00' },
+  { name: '5Dk Fiyat > 20 Günlük Ortalama', timeframe: '5m', indicator1: 'PRICE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'SMA_DAYS', ind2Length: '20', score: '10.00' },
   { name: '5Dk MA(9) Yukarı Keser MA(21)', timeframe: '5m', indicator1: 'SMA', ind1Length: '9', condition: 'crosses_above', targetType: 'indicator', indicator2: 'SMA', ind2Length: '21', score: '10.00' },
   { name: 'MACD (12,26,9) Pozitif Momentum', timeframe: '4h', indicator1: 'MACD_LINE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'MACD_SIGNAL', ind2Length: '14', score: '10.00' },
   { name: 'Bollinger (22, 2) Orta Bant Üzeri', timeframe: '4h', indicator1: 'PRICE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'BOLLINGER_MIDDLE', ind2Length: '14', score: '10.00' },
@@ -107,7 +109,7 @@ const RULE_TEMPLATES: RuleTemplate[] = [
 ];
 
 const ALIASES: Record<string, string> = { MA: 'SMA', BB_UPPER: 'BOLLINGER_UPPER', BB_MIDDLE: 'BOLLINGER_MIDDLE', BB_LOWER: 'BOLLINGER_LOWER', MACD: 'MACD_LINE', STOCH_RSI: 'STOCH_RSI_K' };
-const LENGTH_INDICATORS = new Set(['SMA', 'EMA', 'RSI']);
+const LENGTH_INDICATORS = new Set(['SMA', 'EMA', 'RSI', 'SMA_DAYS']);
 
 /** Identifies a rule by what it checks (not by its name), so differently named copies are detected. */
 function conditionSignature(c: {
@@ -334,7 +336,7 @@ export default function CreateRuleDialog({
 
   const buildParams = (ind: string, lengthVal: string) => {
     const len = parseInt(lengthVal, 10) || 14;
-    if (ind === 'SMA' || ind === 'EMA' || ind === 'RSI') return { length: len };
+    if (LENGTH_INDICATORS.has(ind)) return { length: len }; // SMA_DAYS: length = trading days
     if (ind === 'RSI_TRENDLINE') {
       // keep parameters the form does not show (e.g. confirm_bars) instead of dropping them
       const p: RuleParams = { ...(editingRule?.indicator_2_params ?? {}) };
@@ -412,8 +414,9 @@ export default function CreateRuleDialog({
     }
   };
 
-  const showInd1Period = indicator1 === 'SMA' || indicator1 === 'EMA' || indicator1 === 'RSI';
-  const showInd2Period = indicator2 === 'SMA' || indicator2 === 'EMA' || indicator2 === 'RSI';
+  const showInd1Period = LENGTH_INDICATORS.has(indicator1);
+  const showInd2Period = LENGTH_INDICATORS.has(indicator2);
+  const periodLabel = (ind: string) => (ind === 'SMA_DAYS' ? 'Gün Sayısı' : 'Mum Periyodu');
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -694,7 +697,7 @@ export default function CreateRuleDialog({
               </div>
               {showInd1Period && (
                 <div className="col-span-4 space-y-1.5">
-                  <Label className="text-xs font-medium text-slate-300">Mum Periyodu</Label>
+                  <Label className="text-xs font-medium text-slate-300">{periodLabel(indicator1)}</Label>
                   <Input
                     type="number"
                     value={ind1Length}
@@ -770,7 +773,7 @@ export default function CreateRuleDialog({
                 </div>
                 {showInd2Period && (
                   <div className="col-span-4 space-y-1.5">
-                    <Label className="text-xs font-medium text-slate-300">Mum Periyodu</Label>
+                    <Label className="text-xs font-medium text-slate-300">{periodLabel(indicator2)}</Label>
                     <Input
                       type="number"
                       value={ind2Length}

@@ -26,6 +26,7 @@ function indicatorLabel(name?: string | null, params?: Params): string {
     case 'SMA':
     case 'MA': return `MA(${len ?? 50})`;
     case 'EMA': return `EMA(${len ?? 50})`;
+    case 'SMA_DAYS': return `${len ?? 20} günlük ort.`;
     case 'STOCH_RSI':
     case 'STOCH_RSI_K': return 'Stoch %K';
     case 'STOCH_RSI_D': return 'Stoch %D';
