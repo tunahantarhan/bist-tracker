@@ -339,3 +339,43 @@ def test_trendline_min_slope_rejects_a_flat_triangle():
     sig = RuleEngine.trendline_signal(rsi, {"min_peak": 60, "lookback": 80, "min_slope": 0.5})
     assert sig["checks"]["second_peak"] and not sig["checks"]["steep"]
     assert not sig["valid"]
+
+
+def test_confirm_settings_reads_bar_average_and_legacy_day_average():
+    from types import SimpleNamespace
+    from app.services.market_service import confirm_settings
+    rule = lambda **p: SimpleNamespace(indicator_2_params=p)  # noqa: E731
+    s = confirm_settings(rule(confirm_ma_length=20, confirm_window_sessions=0))
+    assert (s.enabled, s.length, s.timeframe, s.window, s.label) == (True, 20, "5m", 0, "5dk MA(20)")
+    assert confirm_settings(rule()).enabled is False
+    assert confirm_settings(None).enabled is False
+    legacy = confirm_settings(rule(confirm_ma_days=20, confirm_window_sessions=5))
+    assert (legacy.length, legacy.window) == (20, 5)  # old 20-day rules become MA(20) of 5m bars
+    assert confirm_settings(rule(confirm_ma_length=20, confirm_ma_timeframe="4h")).timeframe == "5m"
+
+
+def test_confirm_overlay_draws_the_5m_average_on_any_chart():
+    from types import SimpleNamespace
+    from app.services.market_service import _confirm_overlay
+    primary = SimpleNamespace(is_primary_filter=True, is_active=True, indicator_1="RSI", indicator_2="RSI_TRENDLINE",
+                              indicator_2_params={"confirm_ma_length": 3}, timeframe="4h")
+    five = _bars("2026-11-10 10:00", 12, "5min")
+    times = [str(t) for t in five.index]
+    line = _confirm_overlay(five, times, [primary], {}, "5m")[0]
+    assert line["name"] == "Teyit 5dk MA(3)"
+    assert [p["value"] for p in line["data"]][:2] == pytest.approx([101.0, 102.0])  # SMA(3) of 100,101,102,...
+    hourly = pd.DatetimeIndex([pd.Timestamp("2026-11-10 09:30", tz=TZ), pd.Timestamp("2026-11-10 10:30", tz=TZ)])
+    chart = pd.DataFrame({"Close": [1.0, 2.0]}, index=hourly)
+    line = _confirm_overlay(chart, [str(t) for t in hourly], [primary], {"5m": five}, "1h")[0]
+    assert [p["value"] for p in line["data"]] == pytest.approx([104.0, 110.0])  # value at each bar's close
+
+
+def test_closed_bar_check_ignores_the_forming_bar_while_the_market_is_open():
+    from app.services.market_service import closed_bar_check
+    df = _bars("2026-11-24 10:00", 6, "5min")
+    df["Close"] = [10.0, 10.0, 10.0, 10.0, 9.9, 10.5]  # last bar: live tick over the line
+    live = closed_bar_check(df, 3, market_open=True)
+    assert live["above"] is False and live["close"] == 9.9 and live["bar"].startswith("2026-11-24T10:20")
+    closed = closed_bar_check(df, 3, market_open=False)  # after the session every bar is final
+    assert closed["above"] is True and closed["close"] == 10.5
+    assert closed_bar_check(df.iloc[:2], 3, market_open=False) is None  # average not formed yet

@@ -134,13 +134,44 @@ export interface TrendChecks {
   near?: boolean;
 }
 
-/** Second step of the primary filter: price above the N-day average of 5m bars after the RSI signal */
+/** Second step of the primary filter: after the RSI signal a 5m bar must close above its MA(N) */
 export interface PrimaryConfirm {
-  days: number;
+  /** bars of the moving average, e.g. 20 */
+  length: number;
+  /** candle size of the average, e.g. "5m" */
+  timeframe: string;
+  /** short label, e.g. "5dk MA(20)" */
+  label: string;
+  /** sessions the stock waits for the confirmation after the RSI signal */
+  window_sessions?: number;
+  /** latest closed bar: its average, close, start time and whether it closed above */
   average: number | null;
+  last_close?: number | null;
+  last_bar?: string | null;
+  above?: boolean | null;
+  /** Unix seconds: RSI signal (stock armed), end of the waiting window, confirmation */
   armed_at: number | null;
   deadline: number | null;
   confirmed_at: number | null;
+  /** price when the RSI signal came */
+  rsi_price?: number | null;
+  /** the bar that confirmed the signal */
+  confirm_bar?: string | null;
+  confirm_close?: number | null;
+  confirm_average?: number | null;
+}
+
+/** Live settings of both primary filter steps (for the "how it works" texts) */
+export interface PrimaryFilterInfo {
+  name: string;
+  timeframe: string;
+  lookback: number;
+  min_peak: number;
+  max_trend_end: number;
+  confirm_bars: number;
+  max_bars_since_break: number;
+  near_gap: number;
+  confirm: { length: number; timeframe: string; label: string; window_sessions: number } | null;
 }
 
 export interface RuleBreakdownItem {
@@ -273,6 +304,9 @@ export interface StockOverviewItem {
 export interface MarketOverviewResponse {
   items: StockOverviewItem[];
   rsi_passed: StockOverviewItem[];
+  /** RSI signal given, waiting for a 5m bar to close above the average */
+  primary_waiting?: StockOverviewItem[];
+  primary_filter?: PrimaryFilterInfo | null;
   top_scored: StockOverviewItem[];
   top_priced: StockOverviewItem[];
   primary_filter_timeframe?: string;

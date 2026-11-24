@@ -78,8 +78,10 @@ async def dispatch_alerts(db: AsyncSession, overview: dict[str, Any], rules: lis
             msg = (
                 f"{item['symbol']} hissesi {_tf_label(primary.timeframe)} grafikte "
                 f"'{primary.name}' koşulunu sağladı"
-                + (f" ve fiyat {confirm['days']} günlük ortalamanın (₺{confirm['average']:.2f}) üstüne çıktı"
-                   if confirm and confirm.get("average") is not None else "")
+                + (f"; ardından 5 dk mum ₺{confirm['confirm_close']:.2f} ile {confirm['label']} ortalamasının "
+                   f"(₺{confirm['confirm_average']:.2f}) üstünde kapandı"
+                   if confirm and confirm.get("confirm_close") is not None and confirm.get("confirm_average") is not None
+                   else "")
                 + f". Güncel fiyat: ₺{item['current_price']:.2f}"
             )
             for user_id, email in active_users:

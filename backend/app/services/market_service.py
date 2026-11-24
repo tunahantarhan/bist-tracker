@@ -19,6 +19,7 @@ import asyncio
 import logging
 import math
 import time
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Sequence
 
@@ -78,16 +79,20 @@ OVERLAY_LABELS = {
     "BOLLINGER_MIDDLE": "BB Orta", "BB_MIDDLE": "BB Orta",
     "BOLLINGER_LOWER": "BB Alt", "BB_LOWER": "BB Alt",
 }
-# N-day average of intraday bars ("price above the 20-day average on the 5m chart")
+# N-day average of intraday bars (SMA_DAYS rules)
 DAY_AVERAGE_INDICATOR = "SMA_DAYS"
-DAY_AVERAGE_COLOR = "#f97316"
+DAY_AVERAGE_COLOR = "#eab308"
+CONFIRM_COLOR = "#f97316"  # the primary filter's second-step average
 TF_LABELS = {"5m": "5dk", "15m": "15dk", "1h": "1s"}
 LINE_COLORS = ["#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f43f5e"]
 
 # Second step of the primary filter: after the RSI signal the stock is "armed"; it becomes a
-# signal once price closes above the N-day average of 5m bars within the waiting window.
-ARMED_STATE_KEY = "primary_armed_v1"
-CONFIRM_DEFAULTS = {"confirm_ma_days": 0, "confirm_window_sessions": 5}  # 0 days = step disabled
+# signal once price is above the N-bar moving average of 5m bars (the consultant's "20'lik
+# ortalama" on the 5m chart) within the waiting window.
+ARMED_STATE_KEY = "primary_armed_v3"  # v1: 20-day average, v2: live price instead of closed bars
+CONFIRM_DEFAULTS = {"confirm_ma_length": 0, "confirm_ma_timeframe": "5m", "confirm_window_sessions": 1}
+LEGACY_CONFIRM_LENGTH = 20  # rules saved with the old `confirm_ma_days` keep the step on
+CONFIRM_TIMEFRAMES = ("5m", "15m", "1h")
 
 _overview_lock = asyncio.Lock()
 _overview_memory: dict[str, Any] = {"data": None}
@@ -160,13 +165,17 @@ def required_timeframes(rules: Sequence[Any]) -> set[str]:
 
 
 def detail_timeframes(rules: Sequence[Any]) -> set[str]:
-    """Evaluation frames plus hourly bars for day-average lines (5m history is only ~1 month)."""
+    """Evaluation frames plus hourly bars for day-average lines (5m history is only ~1 month)
+    and the second step's frame for its chart line."""
     tfs = required_timeframes(rules)
     uses_day_average = any(
         DAY_AVERAGE_INDICATOR in ((r.indicator_1 or "").upper(), (r.indicator_2 or "").upper()) for r in rules
     )
     if uses_day_average:
         tfs.add("1h")
+    confirm = confirm_settings(get_primary_rule(rules))
+    if confirm.enabled:
+        tfs.add(confirm.timeframe)
     return tfs
 
 
@@ -293,30 +302,104 @@ async def _evaluate_for_overview(
         return None
 
 
-def confirm_settings(primary: Any | None) -> tuple[int, int]:
-    """(average days, waiting window in sessions) of the primary filter's second step."""
+@dataclass(frozen=True)
+class ConfirmSettings:
+    """Second step of the primary filter: price above the `length`-bar SMA of `timeframe` bars
+    within `window` sessions after the RSI signal (0 = until that session's close)."""
+    length: int = 0
+    timeframe: str = "5m"
+    window: int = 1
+
+    @property
+    def enabled(self) -> bool:
+        return self.length > 0
+
+    @property
+    def label(self) -> str:
+        return f"{TF_LABELS.get(self.timeframe, self.timeframe)} MA({self.length})"
+
+
+def confirm_settings(primary: Any | None) -> ConfirmSettings:
     params = {**CONFIRM_DEFAULTS, **((primary.indicator_2_params or {}) if primary else {})}
     try:
-        return max(0, int(float(params["confirm_ma_days"] or 0))), max(0, int(float(params["confirm_window_sessions"] or 0)))
+        length = int(float(params["confirm_ma_length"] or 0))
+        if length <= 0 and float(params.get("confirm_ma_days") or 0) > 0:
+            length = LEGACY_CONFIRM_LENGTH
+        timeframe = str(params["confirm_ma_timeframe"] or "5m")
+        window = int(float(params["confirm_window_sessions"] or 0))
     except (TypeError, ValueError):
-        return 0, 0
+        return ConfirmSettings()
+    if timeframe not in CONFIRM_TIMEFRAMES:
+        timeframe = "5m"
+    return ConfirmSettings(max(0, length), timeframe, max(0, window))
 
 
-async def intraday_day_average(symbol: str, days: int) -> float | None:
-    """Mean close of the 5m bars of the last `days` sessions (hourly bars if 5m history is
-    shorter, e.g. around long holidays: Yahoo keeps 5m bars for ~60 days, we load one month)."""
-    for interval, period in (("5m", "1mo"), ("1h", "6mo")):
-        try:
-            df = await provider.fetch_historical_data(symbol=symbol, interval=interval, period=period)
-        except Exception as e:
-            logger.debug("MA confirmation frame %s/%s unavailable: %s", symbol, interval, e)
-            continue
-        if df is None or df.empty:
-            continue
-        ma = RuleEngine.session_sma(df["Close"].dropna().astype(float), days)
-        if len(ma) and not np.isnan(ma.iloc[-1]):
-            return float(ma.iloc[-1])
-    return None
+def confirm_average_series(df: pd.DataFrame | None, length: int) -> pd.Series | None:
+    if df is None or df.empty:
+        return None
+    return RuleEngine.get_indicator_series(df, "SMA", {"length": length})
+
+
+def closed_bar_check(df: pd.DataFrame | None, length: int, market_open: bool) -> dict[str, Any] | None:
+    """Close and average of the last *closed* bar. While the market is open the last bar is
+    still forming (the live quote is overlaid on it), so a price that only ticks a kuruş over
+    the line does not count: the bar has to close above its average."""
+    ma = confirm_average_series(df, length)
+    if ma is None:
+        return None
+    closes = df["Close"].astype(float)
+    if market_open and len(closes) > 1:
+        closes, ma = closes.iloc[:-1], ma.iloc[:-1]
+    valid = ma.notna() & closes.notna()
+    if not valid.any():
+        return None
+    ts = valid[valid].index[-1]
+    close, average = float(closes.loc[ts]), float(ma.loc[ts])
+    return {"bar": pd.Timestamp(ts).isoformat(), "close": round(close, 4), "average": round(average, 4), "above": close > average}
+
+
+async def confirm_check(symbol: str, settings: ConfirmSettings) -> dict[str, Any] | None:
+    """Second-step check on the latest closed bar of the confirmation timeframe."""
+    try:
+        df = await provider.fetch_historical_data(
+            symbol=symbol, interval=settings.timeframe, period=EVALUATION_PERIODS.get(settings.timeframe, "1mo")
+        )
+    except Exception as e:
+        logger.debug("MA confirmation frame %s/%s unavailable: %s", symbol, settings.timeframe, e)
+        return None
+    return closed_bar_check(df, settings.length, market_state() != "closed")
+
+
+def _confirm_payload(settings: ConfirmSettings, check: dict[str, Any] | None, arm: dict[str, Any] | None) -> dict[str, Any]:
+    """What the UI and the alert show about the second step. `last_*` is the latest closed bar,
+    `confirm_*` the bar that confirmed the signal (kept for the rest of the window)."""
+    check = check or {}
+    arm = arm or {}
+    return {
+        "length": settings.length, "timeframe": settings.timeframe, "label": settings.label,
+        "window_sessions": settings.window,
+        "average": check.get("average"),
+        "last_close": check.get("close"), "last_bar": check.get("bar"), "above": check.get("above"),
+        "armed_at": arm.get("armed_at"), "deadline": arm.get("deadline"), "rsi_price": arm.get("rsi_price"),
+        "confirmed_at": arm.get("confirmed_at"), "confirm_bar": arm.get("confirm_bar"),
+        "confirm_close": arm.get("confirm_close"), "confirm_average": arm.get("confirm_average"),
+    }
+
+
+def primary_filter_info(primary: Any | None) -> dict[str, Any] | None:
+    """Parameters of both steps, so the UI can explain the filter with the live settings."""
+    if primary is None:
+        return None
+    p = RuleEngine.trendline_params(primary.indicator_2_params)  # exactly what the rule engine uses
+    confirm = confirm_settings(primary)
+    return {
+        "name": primary.name, "timeframe": primary.timeframe,
+        "lookback": p["lookback"], "min_peak": p["min_peak"], "max_trend_end": p["max_trend_end"],
+        "confirm_bars": p["confirm_bars"], "max_bars_since_break": p["max_bars_since_break"],
+        "near_gap": p["near_gap"],
+        "confirm": {"length": confirm.length, "timeframe": confirm.timeframe, "label": confirm.label,
+                    "window_sessions": confirm.window} if confirm.enabled else None,
+    }
 
 
 async def _armed_state() -> dict[str, dict[str, Any]]:
@@ -329,14 +412,16 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
     """Turns the RSI stage into the final primary filter result (in place).
 
     `primary_rsi_passed` is the RSI breakout itself; it arms the stock for
-    `confirm_window_sessions` sessions. `primary_filter_passed` becomes True once price is
-    above the `confirm_ma_days`-day average (5m bars) while armed, and stays True for the
-    rest of the window (`signal_ttl` lets alerts fire once per arming).
+    `confirm_window_sessions` sessions. `primary_filter_passed` becomes True once a 5m bar
+    closes above its `confirm_ma_length`-bar average while armed, and stays True for the
+    rest of the window (`signal_ttl` lets alerts fire once per arming). Armed stocks that are
+    still waiting for that bar are listed as `primary_waiting`.
     """
-    days, window = confirm_settings(primary)
+    settings = confirm_settings(primary)
+    window = settings.window
     for item in items:
         item["primary_rsi_passed"] = bool(item.get("primary_filter_passed"))
-    if primary is None or days <= 0:
+    if primary is None or not settings.enabled:
         return
 
     state = await _armed_state()
@@ -353,31 +438,23 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
         item["primary_filter_passed"] = False
         if arm is None:
             continue
-        ma = await intraday_day_average(sym, days)
-        if ma is not None and item.get("current_price") is not None and item["current_price"] > ma \
-                and not arm.get("confirmed_at"):
-            arm["confirmed_at"] = now
+        check = await confirm_check(sym, settings)
+        if check and check["above"] and not arm.get("confirmed_at"):
+            arm.update(confirmed_at=now, confirm_bar=check["bar"], confirm_close=check["close"],
+                       confirm_average=check["average"])
         item["primary_filter_passed"] = bool(arm.get("confirmed_at"))
-        item["primary_confirm"] = {
-            "days": days, "average": round(ma, 4) if ma is not None else None,
-            "armed_at": arm["armed_at"], "deadline": arm["deadline"], "confirmed_at": arm.get("confirmed_at"),
-        }
+        item["primary_confirm"] = _confirm_payload(settings, check, arm)
         item["signal_ttl"] = max(60, int(arm["deadline"] - now))
     await CacheService.set_json(ARMED_STATE_KEY, state, expiration=(window + 4) * 86400)
 
 
 async def primary_confirmation_status(symbol: str, primary: Any | None) -> dict[str, Any] | None:
     """Read-only view of the second step for the detail page (arming happens in scans)."""
-    days, _ = confirm_settings(primary)
-    if primary is None or days <= 0:
+    settings = confirm_settings(primary)
+    if primary is None or not settings.enabled:
         return None
     arm = (await _armed_state()).get(symbol)
-    average = await intraday_day_average(symbol, days)
-    return {
-        "days": days, "average": round(average, 4) if average is not None else None,
-        "armed_at": arm["armed_at"] if arm else None, "deadline": arm["deadline"] if arm else None,
-        "confirmed_at": arm.get("confirmed_at") if arm else None,
-    }
+    return _confirm_payload(settings, await confirm_check(symbol, settings), arm)
 
 
 def _build_payload(items: list[dict[str, Any]], primary_tf: str, quotes: dict[str, Quote], **extra: Any) -> dict[str, Any]:
@@ -385,6 +462,12 @@ def _build_payload(items: list[dict[str, Any]], primary_tf: str, quotes: dict[st
         "items": items,
         "rsi_passed": sorted(
             [i for i in items if i["has_primary_filter"] and i["primary_filter_passed"]],
+            key=lambda x: x["score"],
+            reverse=True,
+        ),
+        # RSI signal given, waiting for a 5m bar to close above the average
+        "primary_waiting": sorted(
+            [i for i in items if i.get("primary_confirm") and not i["primary_filter_passed"]],
             key=lambda x: x["score"],
             reverse=True,
         ),
@@ -434,7 +517,10 @@ async def compute_overview(db: AsyncSession) -> dict[str, Any]:
     await apply_primary_confirmation(items, primary)
     _scan_state["last_duration"] = round(time.time() - started, 1)
     _scan_state["partial"] = []
-    return _build_payload(items, primary_tf, quotes, scan_seconds=_scan_state["last_duration"], universe_size=len(symbols))
+    return _build_payload(
+        items, primary_tf, quotes, scan_seconds=_scan_state["last_duration"], universe_size=len(symbols),
+        primary_filter=primary_filter_info(primary),
+    )
 
 
 async def _refresh_overview() -> dict[str, Any]:
@@ -524,6 +610,7 @@ def public_overview(payload: dict[str, Any]) -> dict[str, Any]:
         **payload,
         "items": slim(payload.get("items", [])),
         "rsi_passed": slim(payload.get("rsi_passed", [])),
+        "primary_waiting": slim(payload.get("primary_waiting", [])),
         "top_scored": slim(payload.get("top_scored", [])),
         "top_priced": slim(payload.get("top_priced", [])),
     }
@@ -676,6 +763,28 @@ def _day_average_overlays(
     return overlays
 
 
+def _confirm_overlay(
+    chart_df: pd.DataFrame, times: list[str], rules: Sequence[Any], frames: dict[str, pd.DataFrame], interval: str
+) -> list[dict[str, Any]]:
+    """The second step's average: drawn from the chart's own bars on its timeframe, otherwise
+    its value at the close of every chart bar."""
+    settings = confirm_settings(get_primary_rule(rules))
+    if not settings.enabled:
+        return []
+    try:
+        if interval == settings.timeframe:
+            series = confirm_average_series(chart_df, settings.length)
+        else:
+            series = confirm_average_series(frames.get(settings.timeframe), settings.length)
+            series = align_to_chart(series, chart_df.index, interval) if series is not None else None
+    except Exception as e:
+        logger.debug("Confirmation overlay skipped: %s", e)
+        return []
+    if series is None:
+        return []
+    return [{"name": f"Teyit {settings.label}", "color": CONFIRM_COLOR, "data": _series_points(times, series)}]
+
+
 def _build_overlays(
     chart_df: pd.DataFrame,
     times: list[str],
@@ -683,8 +792,9 @@ def _build_overlays(
     frames: dict[str, pd.DataFrame] | None = None,
     interval: str = "1d",
 ) -> list[dict[str, Any]]:
-    # day averages first: they are the reference line of the primary filter's second step
-    overlays = _day_average_overlays(chart_df, times, rules, frames or {}, interval)
+    # the second step's average first: it is the reference line of the primary filter
+    overlays = _confirm_overlay(chart_df, times, rules, frames or {}, interval)
+    overlays += _day_average_overlays(chart_df, times, rules, frames or {}, interval)
     seen: set[str] = set()
 
     for rule in rules:

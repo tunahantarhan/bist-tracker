@@ -96,7 +96,7 @@ interface RuleTemplate {
 
 const RULE_TEMPLATES: RuleTemplate[] = [
   { name: 'Kısa Vade: MA(9) > MA(14) Trendi', timeframe: '15m', indicator1: 'SMA', ind1Length: '9', condition: '>', targetType: 'indicator', indicator2: 'SMA', ind2Length: '14', score: '10.00' },
-  { name: '5Dk Fiyat > 20 Günlük Ortalama', timeframe: '5m', indicator1: 'PRICE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'SMA_DAYS', ind2Length: '20', score: '10.00' },
+  { name: '5Dk Fiyat > MA(20)', timeframe: '5m', indicator1: 'PRICE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'SMA', ind2Length: '20', score: '10.00' },
   { name: '5Dk MA(9) Yukarı Keser MA(21)', timeframe: '5m', indicator1: 'SMA', ind1Length: '9', condition: 'crosses_above', targetType: 'indicator', indicator2: 'SMA', ind2Length: '21', score: '10.00' },
   { name: 'MACD (12,26,9) Pozitif Momentum', timeframe: '4h', indicator1: 'MACD_LINE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'MACD_SIGNAL', ind2Length: '14', score: '10.00' },
   { name: 'Bollinger (22, 2) Orta Bant Üzeri', timeframe: '4h', indicator1: 'PRICE', ind1Length: '14', condition: '>', targetType: 'indicator', indicator2: 'BOLLINGER_MIDDLE', ind2Length: '14', score: '10.00' },
@@ -168,7 +168,7 @@ const getTargetTypeLabel = (val: string) =>
 
 // Optional primary-filter parameters edited as plain number fields (empty = default)
 const TREND_EXTRA_KEYS = [
-  'min_slope', 'near_gap', 'max_rsi_dip', 'confirm_ma_days', 'confirm_window_sessions',
+  'min_slope', 'near_gap', 'max_rsi_dip', 'confirm_ma_length', 'confirm_window_sessions',
 ] as const;
 type TrendExtraKey = (typeof TREND_EXTRA_KEYS)[number];
 const EMPTY_TREND_EXTRA = Object.fromEntries(TREND_EXTRA_KEYS.map((k) => [k, ''])) as Record<TrendExtraKey, string>;
@@ -227,7 +227,11 @@ function getInitialForm(rule?: Rule | null): RuleFormValues {
     trendLookback: str(p2.lookback, '60'),
     trendMinPeak: str(p2.min_peak, '60'),
     trendMaxEnd: str(p2.max_trend_end, '30'),
-    trendExtra: Object.fromEntries(TREND_EXTRA_KEYS.map((k) => [k, str(p2[k], '')])) as Record<TrendExtraKey, string>,
+    trendExtra: {
+      ...(Object.fromEntries(TREND_EXTRA_KEYS.map((k) => [k, str(p2[k], '')])) as Record<TrendExtraKey, string>),
+      // rules saved with the old 20-day average keep the step on as MA(20) of 5m bars
+      ...(p2.confirm_ma_length == null && Number(p2.confirm_ma_days) > 0 ? { confirm_ma_length: '20' } : {}),
+    },
     scoreImpact: str(rule.score_impact, rule.is_primary_filter ? '25.00' : '10.00'),
   };
 }
@@ -341,6 +345,7 @@ export default function CreateRuleDialog({
       // keep parameters the form does not show (e.g. confirm_bars) instead of dropping them
       const p: RuleParams = { ...(editingRule?.indicator_2_params ?? {}) };
       delete p.slope; // legacy field, never used by the engine
+      delete p.confirm_ma_days; // old 20-day average, replaced by confirm_ma_length (bars)
       Object.assign(p, {
         length: 14,
         lookback: parseInt(trendLookback, 10) || 60,
@@ -598,22 +603,22 @@ export default function CreateRuleDialog({
 
               <div className="mt-3 pt-3 border-t border-slate-700/60">
                 <div className="text-[11px] text-slate-300 font-sans font-semibold mb-2">
-                  İkinci adım: fiyat, 5 dk mumlarla N günlük ortalamanın üstüne çıkmalı
+                  İkinci adım: RSI sinyalinden sonra bir 5 dk mum, N mumluk hareketli ortalamanın üstünde kapanmalı
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono">
                   <TrendExtraField
-                    label="Ortalama (gün)"
-                    title="RSI koşulundan sonra fiyat bu kadar günlük ortalamanın üstüne çıkınca sinyal gelir; boş = ikinci adım kapalı"
-                    value={trendExtra.confirm_ma_days}
-                    onChange={(v) => setExtra('confirm_ma_days', v)}
+                    label="Ortalama (mum)"
+                    title="RSI koşulundan sonra bir 5 dk mum, bu kadar mumluk hareketli ortalamanın (ör. MA 20) üstünde kapanınca sinyal gelir; anlık fiyat sayılmaz. Boş = ikinci adım kapalı"
+                    value={trendExtra.confirm_ma_length}
+                    onChange={(v) => setExtra('confirm_ma_length', v)}
                     placeholder="Kapalı"
                   />
                   <TrendExtraField
                     label="Bekleme (seans)"
-                    title="RSI koşulundan sonra ortalamanın aşılması için beklenen seans sayısı"
+                    title="RSI koşulundan sonra ortalamanın aşılması için beklenen seans sayısı (0 = aynı gün kapanışa kadar, 1 = ertesi seans kapanışına kadar)"
                     value={trendExtra.confirm_window_sessions}
                     onChange={(v) => setExtra('confirm_window_sessions', v)}
-                    placeholder="5"
+                    placeholder="1"
                   />
                 </div>
               </div>

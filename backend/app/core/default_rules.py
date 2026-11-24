@@ -4,12 +4,13 @@ Mirrors the rule set tuned with the domain consultant: the primary filter runs o
 4h chart (parameters agreed on 2026-11-19, checked with
 `python -m app.scripts.backtest_primary_filter`) and weights add up to exactly 100, so
 the score is a percentage without normalisation. The second step (price above the
-20-day average of 5m bars within 5 sessions) is on by default.
+20-bar moving average of 5m bars, the consultant's "20'lik ortalama" on the 5m chart, by the
+next session's close) is on by default.
 """
 
 PRIMARY_TRENDLINE_PARAMS: dict = {
     "length": 14, "lookback": 60, "min_peak": 67.0, "max_trend_end": 30.0,
-    "min_bounce": 2.0, "near_gap": 5.0, "confirm_ma_days": 20, "confirm_window_sessions": 5,
+    "min_bounce": 2.0, "near_gap": 5.0, "confirm_ma_length": 20, "confirm_ma_timeframe": "5m", "confirm_window_sessions": 1,
 }
 
 DEFAULT_RULE_SUITE: list[dict] = [
@@ -17,8 +18,8 @@ DEFAULT_RULE_SUITE: list[dict] = [
         "name": "4S RSI (14) Düşen Trend Kırılımı",
         "description": "4 saatlik grafikte RSI(14), son 60 mumdaki düşen direnç çizgisini (tepe ≥ 67 ve sonraki "
                        "tepki tepesi) dip bölgede (çizgi ≤ 30) yükselerek kesmeli (2 mum onaylı, en fazla 4 mum önce) "
-                       "ya da kesmeye 5 puan kalmış ve yükseliyor olmalı; ardından 5 seans içinde fiyat, 5 dakikalık "
-                       "mumlarla 20 günlük ortalamanın üstüne çıkmalı",
+                       "ya da kesmeye 5 puan kalmış ve yükseliyor olmalı; ardından en geç ertesi seans kapanışına kadar "
+                       "fiyat, 5 dakikalık grafikte 20 mumluk hareketli ortalamanın (MA 20) üstüne çıkmalı",
         "timeframe": "4h",
         "is_primary_filter": True,
         "indicator_1": "RSI",
