@@ -370,6 +370,22 @@ def test_confirm_overlay_draws_the_5m_average_on_any_chart():
     assert [p["value"] for p in line["data"]] == pytest.approx([104.0, 110.0])  # value at each bar's close
 
 
+def test_rsi_pane_uses_the_evaluation_candles_on_the_primary_timeframe():
+    from types import SimpleNamespace
+    from app.services.market_service import _build_rsi_pane
+    primary = SimpleNamespace(timeframe="4h", indicator_2_params={})
+    rng = np.random.default_rng(0)
+    full = _bars("2026-05-01 10:00", 300, "4h")
+    full["Close"] = 100 + rng.normal(0, 1, 300).cumsum()
+    chart = full.iloc[-20:]  # 1A range: too short to warm RSI(14) up on its own
+    times = [str(t) for t in chart.index]
+    own = _build_rsi_pane(chart, times, primary, {}, "4h")
+    shared = _build_rsi_pane(chart, times, primary, {"4h": full}, "4h")
+    assert len(own["rsi"]) < 20 and len(shared["rsi"]) == 20
+    other = _build_rsi_pane(chart, times, primary, {"4h": full}, "1h")
+    assert other["trend_note"] is None or other["trend_note"].startswith("1S verisiyle")
+
+
 def test_closed_bar_check_ignores_the_forming_bar_while_the_market_is_open():
     from app.services.market_service import closed_bar_check
     df = _bars("2026-11-24 10:00", 6, "5min")

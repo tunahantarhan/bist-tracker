@@ -84,6 +84,7 @@ DAY_AVERAGE_INDICATOR = "SMA_DAYS"
 DAY_AVERAGE_COLOR = "#eab308"
 CONFIRM_COLOR = "#f97316"  # the primary filter's second-step average
 TF_LABELS = {"5m": "5dk", "15m": "15dk", "1h": "1s"}
+TF_CHART_LABELS = {"5m": "5dk", "15m": "15dk", "1h": "1S", "4h": "4S", "1d": "1G"}
 LINE_COLORS = ["#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f43f5e"]
 
 # Second step of the primary filter: after the RSI signal the stock is "armed"; it becomes a
@@ -846,24 +847,48 @@ def _trend_note(meta: dict[str, Any], p: dict[str, Any]) -> str:
     return f"Kırıldı · {ago} mum önce" if checks.get("fresh") else f"Kırılım eskidi ({ago} mum önce)"
 
 
-def _build_rsi_pane(chart_df: pd.DataFrame, times: list[str], primary: Any | None) -> dict[str, Any]:
-    params = dict(DEFAULT_TRENDLINE_PARAMS)
-    if primary and primary.indicator_2_params:
-        params.update(primary.indicator_2_params)
+def _rsi_pane_source(
+    chart_df: pd.DataFrame, frames: dict[str, pd.DataFrame], primary: Any | None, interval: str
+) -> pd.DataFrame:
+    """Bars the RSI pane is computed on. On the primary filter's timeframe these are the
+    evaluation candles (6 months), so a short chart range (1A) neither warms RSI up from zero
+    nor cuts the trendline's lookback, and the pane always agrees with the rule result."""
+    tf = primary.timeframe if primary else DEFAULT_PRIMARY_TIMEFRAME
+    source = frames.get(tf)
+    if interval != tf or source is None or source.empty or chart_df.empty:
+        return chart_df
+    # a longer chart range (1Y on 4h) already has more history than the evaluation set
+    return source if source.index[0] <= chart_df.index[0] else chart_df
+
+
+def _build_rsi_pane(
+    chart_df: pd.DataFrame,
+    times: list[str],
+    primary: Any | None,
+    frames: dict[str, pd.DataFrame] | None = None,
+    interval: str = "4h",
+) -> dict[str, Any]:
+    # same parameters as the rule engine, so the pane and the rule result cannot disagree
+    params = dict(primary.indicator_2_params or {}) if primary else dict(DEFAULT_TRENDLINE_PARAMS)
+    primary_tf = primary.timeframe if primary else DEFAULT_PRIMARY_TIMEFRAME
 
     pane: dict[str, Any] = {"rsi": [], "trendline": [], "slope": None, "peak_rsi": None, "trend_note": None}
     try:
-        closes = chart_df["Close"].astype(float)
-        rsi = RuleEngine.get_indicator_series(chart_df, "RSI", {"length": int(params.get("length", 14))})
+        source = _rsi_pane_source(chart_df, frames or {}, primary, interval)
+        closes = source["Close"].astype(float)
+        rsi = RuleEngine.get_indicator_series(source, "RSI", {"length": int(params.get("length", 14))})
         trend, meta = RuleEngine.calculate_rsi_downtrend_series(closes, params)
         # no line without a valid second peak; the drawn part stops where it reaches 0
-        drawn = trend.where(trend > 0) if meta.get("t2_x") is not None else trend.iloc[:0]
+        drawn = trend.where(trend > 0) if meta.get("t2_x") is not None else trend.where(trend.isna())
+        note = _trend_note(meta, RuleEngine.trendline_params(params))
+        if interval != primary_tf:
+            note = f"{TF_CHART_LABELS.get(interval, interval)} verisiyle · ana filtre {TF_CHART_LABELS.get(primary_tf, primary_tf)} grafikte değerlendirilir · {note}"
         pane.update(
-            rsi=_series_points(times, rsi),
-            trendline=_series_points(times, drawn),
+            rsi=_series_points(times, rsi.reindex(chart_df.index) if rsi is not None else None),
+            trendline=_series_points(times, drawn.reindex(chart_df.index)),
             slope=meta.get("slope"),
             peak_rsi=meta.get("peak_rsi"),
-            trend_note=_trend_note(meta, RuleEngine.trendline_params(params)),
+            trend_note=note,
         )
     except Exception as e:
         logger.debug("RSI pane skipped: %s", e)
@@ -894,7 +919,7 @@ def _build_detail_body(
         "has_primary_filter": evaluation["has_primary_filter"],
         "rules_breakdown": evaluation["rules_breakdown"],
         "indicators": _build_overlays(chart_df, times, rules, frames, interval),
-        "rsi_pane": _build_rsi_pane(chart_df, times, primary),
+        "rsi_pane": _build_rsi_pane(chart_df, times, primary, frames, interval),
         "periodic_returns": _periodic_returns(frames.get("1d")),
     }
 
