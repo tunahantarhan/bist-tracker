@@ -11,6 +11,7 @@ import { Eyebrow, Panel, PanelHeader } from '@/components/dashboard/Panel';
 import { tfLabel } from '@/lib/timeframes';
 import { ruleFormula } from './ruleFormat';
 import { useFeedback } from '@/components/ui/feedback';
+import { confirmWindowText } from '@/lib/primaryFilter';
 
 const SEGMENT_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16', '#f97316', '#14b8a6', '#a855f7'];
 
@@ -100,6 +101,9 @@ export function PrimaryFilterCard({ rule, onEdit, onToggle }: { rule: Rule; onEd
     { label: 'Min. tepe', value: `${p.min_peak ?? 55}` },
     { label: 'Geriye bakış', value: `${p.lookback ?? 60} bar` },
   ];
+  // second step: a closed 5m bar above MA(N); rules saved with the old 20-day field count as MA(20)
+  const maLength = Number(p.confirm_ma_length) || (Number(p.confirm_ma_days) > 0 ? 20 : 0);
+  const secondStep = maLength > 0 ? `5dk MA(${maLength}) üstünde kapanış · ${confirmWindowText(Number(p.confirm_window_sessions ?? 1))}` : 'Kapalı';
 
   return (
     <Panel className="relative border-amber-500/25">
@@ -132,6 +136,10 @@ export function PrimaryFilterCard({ rule, onEdit, onToggle }: { rule: Rule; onEd
               <p className="mt-0.5 font-data text-sm font-semibold text-amber-200">{s.value}</p>
             </div>
           ))}
+          <div className="col-span-2 rounded-lg border border-slate-800 bg-[#0d1118] px-3 py-2 sm:col-span-4">
+            <p className="text-[10px] text-slate-500">2. adım · ortalama teyidi</p>
+            <p className={`mt-0.5 font-data text-sm font-semibold ${maLength > 0 ? 'text-amber-200' : 'text-slate-500'}`}>{secondStep}</p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-4">

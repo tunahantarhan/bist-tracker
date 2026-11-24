@@ -282,6 +282,8 @@ export default function DashboardPage() {
             <PrimaryFilterPanel
               className={mobileListTab === 'rsi' ? '' : 'hidden lg:block'}
               items={rsiPassedList}
+              waiting={overview?.primary_waiting ?? []}
+              info={overview?.primary_filter}
               loading={loadingOverview}
               timeframe={activePrimaryFilterTf}
               selectedSymbol={selectedSymbol}

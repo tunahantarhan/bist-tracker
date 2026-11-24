@@ -28,7 +28,7 @@ const STEPS = [
   {
     icon: Filter,
     title: 'Ana filtre',
-    text: 'Her hisse önce tek bir kapıdan geçer: RSI, düşen trend çizgisini yukarı kırdı mı?',
+    text: 'Her hisse önce iki adımlı bir kapıdan geçer: 4 saatlik RSI düşen trend çizgisini kırdı mı, ardından 5 dakikalık fiyat kısa vadeli ortalamanın üstünde kapandı mı?',
   },
   {
     icon: Sigma,
@@ -203,10 +203,11 @@ export default function LandingPage() {
                 <p className="leading-relaxed text-slate-400">
                   RSI ardı ardına daha düşük tepeler yaptığında bu tepelerden geçen bir direnç çizgisi oluşur. Satış baskısı zayıfladığında RSI bu
                   çizginin üzerine çıkar. Sistem bu anı yakalar. İlk tepe yeterince yüksek değilse ya da çizgi henüz dip bölgesine inmediyse
-                  kırılım sayılmaz.
+                  kırılım sayılmaz. Kırılımdan sonra 5 dakikalık bir mumun 20 mumluk ortalamanın üstünde kapanması beklenir; sinyal ancak bu
+                  teyitle kesinleşir.
                 </p>
                 <ul className="space-y-2 text-sm text-slate-300">
-                  {['Kesikli çizgi: tepelerden geçen düşen trend', 'Yeşil nokta: RSI’ın çizgiyi yukarı kestiği an', 'Parametreler yönetici panelinden ayarlanır'].map((t) => (
+                  {['Kesikli çizgi: tepelerden geçen düşen trend', 'Yeşil nokta: RSI’ın çizgiyi yukarı kestiği an', 'Teyit: 5 dakikalık mumun ortalamanın üstünde kapanması', 'Parametreler yönetici panelinden ayarlanır'].map((t) => (
                     <li key={t} className="flex items-start gap-2">
                       <Minus className="mt-0.5 h-4 w-4 shrink-0 text-slate-600" /> {t}
                     </li>

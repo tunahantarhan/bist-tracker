@@ -18,6 +18,7 @@ import { addToWatchlist, fetchMarketData, fetchWatchlist, removeFromWatchlist, t
 import { useValueFlash } from '@/hooks/useValueFlash';
 import { tfLabel } from '@/lib/timeframes';
 import { PRIMARY_BADGE_TONES, primaryFilterBadge } from '@/lib/primaryFilter';
+import PrimarySteps from '@/components/rules/PrimarySteps';
 
 // Each candle size comes with a sensible history length
 const TIMEFRAMES = [
@@ -330,6 +331,18 @@ export default function StockDetailPage() {
                 )}
               </div>
             </Panel>
+
+            {data!.has_primary_filter && (
+              <Panel>
+                <PanelHeader
+                  icon={Filter}
+                  title="Ana filtre"
+                  subtitle="Sinyal için iki adımın da tamamlanması gerekir"
+                  accent="amber"
+                />
+                <PrimarySteps data={data!} className="p-4" />
+              </Panel>
+            )}
 
             <div className="grid items-start gap-5 lg:grid-cols-[1.5fr_1fr]">
               <Panel>

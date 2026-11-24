@@ -11,6 +11,7 @@ import { tfLabel } from '@/lib/timeframes';
 import { Eyebrow, Panel, formatPct, formatPrice } from './Panel';
 import PriceStamp from '@/components/ui/PriceStamp';
 import { PRIMARY_BADGE_TONES, primaryFilterBadge } from '@/lib/primaryFilter';
+import PrimarySteps from '@/components/rules/PrimarySteps';
 
 export const CHART_INTERVALS = [
   { value: '5m', label: '5Dk' },
@@ -333,6 +334,7 @@ export default function InstrumentPanel({
         )}
       </div>
 
+      {ready && <PrimarySteps data={data!} className="border-t border-slate-800/80 px-4 py-3 sm:px-5" />}
       {ready && <RulesStrip data={data!} onOpen={onOpenRules} />}
     </Panel>
   );

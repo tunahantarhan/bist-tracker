@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Bookmark, Filter, Loader2, Sparkles, X } from 'lucide-react';
-import type { StockOverviewItem } from '@/services/api';
+import { Bookmark, Clock3, Filter, Loader2, Sparkles, X } from 'lucide-react';
+import type { PrimaryFilterInfo, StockOverviewItem } from '@/services/api';
 import ScoreGauge from '@/components/ui/ScoreGauge';
 import { tfLabel } from '@/lib/timeframes';
+import { formatUnix, primaryFilterSteps } from '@/lib/primaryFilter';
 import { ACCENT, Collapsible, EmptyRow, Panel, PanelHeader, formatPct, type Accent } from './Panel';
 
 function SymbolRow({
@@ -123,6 +124,8 @@ export function WatchlistPanel({
 
 export function PrimaryFilterPanel({
   items,
+  waiting = [],
+  info,
   loading,
   timeframe,
   selectedSymbol,
@@ -130,6 +133,9 @@ export function PrimaryFilterPanel({
   className = '',
 }: {
   items: StockOverviewItem[];
+  /** RSI signal given, waiting for a 5m bar to close above the average */
+  waiting?: StockOverviewItem[];
+  info?: PrimaryFilterInfo | null;
   loading: boolean;
   timeframe: string;
   selectedSymbol: string | null;
@@ -138,13 +144,15 @@ export function PrimaryFilterPanel({
 }) {
   const [open, setOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
+  const steps = primaryFilterSteps(info, tfLabel(timeframe, 'long'));
+  const confirm = info?.confirm;
 
   return (
     <Panel className={`border-amber-500/20 ${className}`}>
       <PanelHeader
         icon={Filter}
         title="Ana filtre"
-        subtitle={`${tfLabel(timeframe, 'long')} RSI kırılımı`}
+        subtitle={confirm ? `${tfLabel(timeframe)} RSI kırılımı + ${confirm.label} teyidi` : `${tfLabel(timeframe, 'long')} RSI kırılımı`}
         accent="amber"
         count={items.length}
         open={open}
@@ -155,23 +163,58 @@ export function PrimaryFilterPanel({
           <div className="flex items-center justify-center gap-2 px-4 py-8 font-data text-xs text-slate-500">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" /> Taranıyor…
           </div>
-        ) : items.length === 0 ? (
-          <EmptyRow>Şu an ana filtreyi geçen hisse yok. Liste her taramada yenilenir.</EmptyRow>
         ) : (
-          <ul className="scrollbar-hide max-h-[260px] divide-y divide-slate-800/60 overflow-y-auto lg:max-h-[340px]">
-            {items.map((item) => (
-              <SymbolRow
-                key={item.symbol}
-                symbol={item.symbol}
-                name={item.name}
-                changePct={item.change_pct}
-                selected={selectedSymbol === item.symbol}
-                accent="amber"
-                onSelect={() => onSelect(item.symbol)}
-                right={<ScoreGauge score={item.score} size="sm" />}
-              />
-            ))}
-          </ul>
+          <>
+            {items.length === 0 ? (
+              <EmptyRow>Şu an ana filtreyi geçen hisse yok. Liste her taramada yenilenir.</EmptyRow>
+            ) : (
+              <ul className="scrollbar-hide max-h-[260px] divide-y divide-slate-800/60 overflow-y-auto lg:max-h-[340px]">
+                {items.map((item) => (
+                  <SymbolRow
+                    key={item.symbol}
+                    symbol={item.symbol}
+                    name={item.name}
+                    changePct={item.change_pct}
+                    selected={selectedSymbol === item.symbol}
+                    accent="amber"
+                    onSelect={() => onSelect(item.symbol)}
+                    right={<ScoreGauge score={item.score} size="sm" />}
+                  />
+                ))}
+              </ul>
+            )}
+
+            {waiting.length > 0 && (
+              <div className="border-t border-slate-800/70">
+                <p
+                  className="flex items-center gap-1.5 bg-slate-900/40 px-3.5 py-2 font-data text-[10px] uppercase tracking-wider text-slate-500"
+                  title="RSI kırılımı geldi; 5 dakikalık bir mumun ortalamanın üstünde kapanması bekleniyor"
+                >
+                  <Clock3 className="h-3 w-3 text-amber-400/70" /> Teyit bekleyen · {waiting.length}
+                </p>
+                <ul className="scrollbar-hide max-h-[200px] divide-y divide-slate-800/60 overflow-y-auto">
+                  {waiting.map((item) => (
+                    <SymbolRow
+                      key={item.symbol}
+                      symbol={item.symbol}
+                      name={item.name}
+                      changePct={item.change_pct}
+                      selected={selectedSymbol === item.symbol}
+                      accent="amber"
+                      onSelect={() => onSelect(item.symbol)}
+                      right={
+                        <span className="shrink-0 text-right font-data text-[10px] leading-tight text-slate-500">
+                          {item.primary_confirm?.label ?? 'MA'} bekleniyor
+                          <br />
+                          <span className="text-slate-600">son {formatUnix(item.primary_confirm?.deadline)}</span>
+                        </span>
+                      }
+                    />
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
         )}
 
         <div className="border-t border-slate-800/70">
@@ -184,11 +227,22 @@ export function PrimaryFilterPanel({
             <Sparkles className="h-3 w-3" /> Filtre nasıl çalışır?
           </button>
           <Collapsible open={infoOpen}>
-            <p className="border-t border-slate-800/70 bg-amber-500/[0.03] px-4 py-3.5 text-xs leading-relaxed text-slate-400">
-              Evrendeki her hisse <strong className="text-slate-200">{tfLabel(timeframe, 'long')}</strong> grafikte incelenir.{' '}
-              <strong className="text-slate-200">RSI (14)</strong> art arda daha düşük tepeler yaptığında bu tepelerden geçen düşen trend
-              çizgisini yukarı kıran hisseler bu listeye girer. Diğer kurallar yalnızca skoru belirler.
-            </p>
+            <div className="space-y-2.5 border-t border-slate-800/70 bg-amber-500/[0.03] px-4 py-3.5 text-xs leading-relaxed text-slate-400">
+              <p>
+                <strong className="text-slate-200">1. RSI kırılımı.</strong> {steps.rsi}
+              </p>
+              {steps.ma && (
+                <p>
+                  <strong className="text-slate-200">2. Ortalama teyidi.</strong> {steps.ma}
+                </p>
+              )}
+              <p>
+                {steps.ma
+                  ? 'İki adım tamamlanınca hisse listeye girer ve bildirim gönderilir; bekleme süresi bitene kadar listede kalır. “Teyit bekleyen” hisselerde yalnızca 1. adım tamamdır.'
+                  : 'Bu adımı geçen hisseler listeye girer ve bildirim gönderilir.'}{' '}
+                Diğer kurallar yalnızca skoru belirler.
+              </p>
+            </div>
           </Collapsible>
         </div>
       </Collapsible>
