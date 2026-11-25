@@ -1,0 +1,19 @@
+# Versions the app is developed and tested with; the Docker image installs exactly these.
+alembic==1.20.0
+APScheduler==3.11.3
+asyncpg==0.31.0
+bcrypt==3.2.2
+curl_cffi==0.16.3
+email-validator==2.3.0
+fastapi==0.110.0
+numpy==2.2.6
+pandas==3.0.6
+pandas-ta==0.4.71b0
+psycopg2-binary==2.9.13
+pydantic==2.9.2
+pydantic-settings==2.5.2
+PyJWT==2.12.1
+redis==5.0.8
+SQLAlchemy==2.0.54
+uvicorn==0.54.0
+yfinance==1.7.0
