@@ -408,3 +408,15 @@ def test_closed_bar_check_ignores_the_forming_bar_while_the_market_is_open():
     closed = closed_bar_check(df, 3, market_open=False)  # after the session every bar is final
     assert closed["above"] is True and closed["close"] == 10.5
     assert closed_bar_check(df.iloc[:2], 3, market_open=False) is None  # average not formed yet
+
+
+def test_closed_bar_check_catches_a_bar_above_the_line_missed_between_scans():
+    from app.services.market_service import closed_bar_check
+    df = _bars("2026-11-24 10:00", 7, "5min")
+    df["Close"] = [10.0, 10.0, 10.0, 10.0, 10.6, 9.8, 9.7]  # 10:20 closed above, then fell back
+    seen = df.index[3].isoformat()  # previous scan saw up to 10:15
+    check = closed_bar_check(df, 3, market_open=False, since=seen)
+    assert check["above"] is False  # latest bar is below the line
+    assert check["first_above"]["bar"].startswith("2026-11-24T10:20") and check["first_above"]["close"] == 10.6
+    assert "first_above" not in closed_bar_check(df, 3, market_open=False, since=df.index[4].isoformat())
+    assert "first_above" not in closed_bar_check(df, 3, market_open=False)  # first scan: latest bar only

@@ -341,10 +341,16 @@ def confirm_average_series(df: pd.DataFrame | None, length: int) -> pd.Series | 
     return RuleEngine.get_indicator_series(df, "SMA", {"length": length})
 
 
-def closed_bar_check(df: pd.DataFrame | None, length: int, market_open: bool) -> dict[str, Any] | None:
+def closed_bar_check(
+    df: pd.DataFrame | None, length: int, market_open: bool, since: str | None = None
+) -> dict[str, Any] | None:
     """Close and average of the last *closed* bar. While the market is open the last bar is
     still forming (the live quote is overlaid on it), so a price that only ticks a kuruş over
-    the line does not count: the bar has to close above its average."""
+    the line does not count: the bar has to close above its average.
+
+    With `since` (the last bar a previous scan saw), `first_above` is the earliest closed bar
+    after it that closed above the average, so a bar missed between scans (machine asleep,
+    scan skipped) still confirms the signal on the next scan."""
     ma = confirm_average_series(df, length)
     if ma is None:
         return None
@@ -354,13 +360,20 @@ def closed_bar_check(df: pd.DataFrame | None, length: int, market_open: bool) ->
     valid = ma.notna() & closes.notna()
     if not valid.any():
         return None
-    ts = valid[valid].index[-1]
-    close, average = float(closes.loc[ts]), float(ma.loc[ts])
-    return {"bar": pd.Timestamp(ts).isoformat(), "close": round(close, 4), "average": round(average, 4), "above": close > average}
+    def bar(ts: Any) -> dict[str, Any]:
+        close, average = float(closes.loc[ts]), float(ma.loc[ts])
+        return {"bar": pd.Timestamp(ts).isoformat(), "close": round(close, 4), "average": round(average, 4), "above": close > average}
+
+    result = bar(valid[valid].index[-1])
+    if since:
+        hits = valid & (closes > ma) & (closes.index > pd.Timestamp(since))
+        if hits.any():
+            result["first_above"] = bar(hits[hits].index[0])
+    return result
 
 
-async def confirm_check(symbol: str, settings: ConfirmSettings) -> dict[str, Any] | None:
-    """Second-step check on the latest closed bar of the confirmation timeframe."""
+async def confirm_check(symbol: str, settings: ConfirmSettings, since: str | None = None) -> dict[str, Any] | None:
+    """Second-step check on the closed bars of the confirmation timeframe (see `closed_bar_check`)."""
     try:
         df = await provider.fetch_historical_data(
             symbol=symbol, interval=settings.timeframe, period=EVALUATION_PERIODS.get(settings.timeframe, "1mo")
@@ -368,7 +381,7 @@ async def confirm_check(symbol: str, settings: ConfirmSettings) -> dict[str, Any
     except Exception as e:
         logger.debug("MA confirmation frame %s/%s unavailable: %s", symbol, settings.timeframe, e)
         return None
-    return closed_bar_check(df, settings.length, market_state() != "closed")
+    return closed_bar_check(df, settings.length, market_state() != "closed", since)
 
 
 def _confirm_payload(settings: ConfirmSettings, check: dict[str, Any] | None, arm: dict[str, Any] | None) -> dict[str, Any]:
@@ -439,10 +452,15 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
         item["primary_filter_passed"] = False
         if arm is None:
             continue
-        check = await confirm_check(sym, settings)
-        if check and check["above"] and not arm.get("confirmed_at"):
-            arm.update(confirmed_at=now, confirm_bar=check["bar"], confirm_close=check["close"],
-                       confirm_average=check["average"])
+        check = await confirm_check(sym, settings, since=arm.get("checked_through"))
+        if check and not arm.get("confirmed_at"):
+            # earliest bar above the line since the previous scan, else the latest closed bar
+            hit = check.get("first_above") or (check if check["above"] else None)
+            if hit:
+                arm.update(confirmed_at=now, confirm_bar=hit["bar"], confirm_close=hit["close"],
+                           confirm_average=hit["average"])
+        if check:
+            arm["checked_through"] = check["bar"]
         item["primary_filter_passed"] = bool(arm.get("confirmed_at"))
         item["primary_confirm"] = _confirm_payload(settings, check, arm)
         item["signal_ttl"] = max(60, int(arm["deadline"] - now))
