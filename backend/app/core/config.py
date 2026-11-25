@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     NOTIFY_ONLY_WHEN_MARKET_OPEN: bool = True
     # Off-session the snapshot only needs refreshing occasionally (FX/gold keep moving)
     OFF_HOURS_SCAN_INTERVAL_MINUTES: int = 30
+    # Extra market holidays on top of core/market_hours.HOLIDAYS (bridge days announced
+    # later), comma-separated ISO dates, e.g. "2027-03-12"
+    MARKET_EXTRA_HOLIDAYS: str = ""
 
     # Yahoo Finance request budget (shared by scanner, charts and scripts in this process)
     YAHOO_MAX_RPS: float = 4.0          # token bucket refill rate

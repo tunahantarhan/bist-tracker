@@ -177,6 +177,19 @@ def test_session_helpers():
     assert next_session_open(saturday) == datetime(2026, 11, 16, 10, 0, tzinfo=TR_TZ)
 
 
+def test_session_helpers_skip_holidays_and_close_early_on_half_days():
+    from app.core.market_hours import session_close_after
+    eve = datetime(2027, 3, 8, 11, 0, tzinfo=TR_TZ)  # Ramazan Bayramı eve: half day, then 9-11 March off
+    assert market_state(eve) == "open"
+    assert market_state(datetime(2027, 3, 8, 12, 35, tzinfo=TR_TZ)) == "auction"
+    assert market_state(datetime(2027, 3, 8, 13, 0, tzinfo=TR_TZ)) == "closed"
+    assert market_state(datetime(2027, 3, 10, 12, 0, tzinfo=TR_TZ)) == "closed"
+    assert session_close_after(eve, 0) == datetime(2027, 3, 8, 12, 40, tzinfo=TR_TZ)
+    assert session_close_after(eve, 1) == datetime(2027, 3, 12, 18, 10, tzinfo=TR_TZ)  # next session after the holiday
+    assert last_session_close(datetime(2027, 3, 11, 12, 0, tzinfo=TR_TZ)) == datetime(2027, 3, 8, 12, 40, tzinfo=TR_TZ)
+    assert next_session_open(datetime(2027, 3, 8, 13, 0, tzinfo=TR_TZ)) == datetime(2027, 3, 12, 10, 0, tzinfo=TR_TZ)
+
+
 # -- request budget -----------------------------------------------------------
 
 def test_token_bucket_enforces_rate_after_burst():

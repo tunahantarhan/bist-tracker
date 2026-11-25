@@ -35,7 +35,7 @@ import yfinance as yf
 from redis import asyncio as aioredis
 
 from app.core.config import settings
-from app.core.market_hours import CONTINUOUS_CLOSE, TR_TZ, is_bist_open, last_session_close
+from app.core.market_hours import TR_TZ, continuous_close_on, is_bist_open, last_session_close
 from app.providers.base import BaseDataProvider
 from app.providers.quotes import Quote, quote_book, to_yahoo_symbol
 from app.providers.yahoo_gateway import RateLimitedError, gateway
@@ -261,7 +261,7 @@ def overlay_quote(df: pd.DataFrame, interval: str, quote: Quote | None) -> pd.Da
         return df  # candles are newer than the quote
     bar = timedelta(minutes=INTRADAY_MINUTES.get(interval, 60))
     same_day = qt.normalize() == last.normalize()
-    if qt < last + bar or (same_day and qt.time() >= CONTINUOUS_CLOSE):
+    if qt < last + bar or (same_day and qt.time() >= continuous_close_on(qt.date())):
         # inside the last bar, or the closing-auction print: fold into the last bar
         df.loc[last, "Close"] = price
         df.loc[last, "High"] = max(df.loc[last, "High"], price)
