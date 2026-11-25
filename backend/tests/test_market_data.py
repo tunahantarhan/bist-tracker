@@ -420,3 +420,20 @@ def test_closed_bar_check_catches_a_bar_above_the_line_missed_between_scans():
     assert check["first_above"]["bar"].startswith("2026-11-24T10:20") and check["first_above"]["close"] == 10.6
     assert "first_above" not in closed_bar_check(df, 3, market_open=False, since=df.index[4].isoformat())
     assert "first_above" not in closed_bar_check(df, 3, market_open=False)  # first scan: latest bar only
+
+
+def test_signal_failure_needs_rsi_back_under_the_line_beyond_the_early_signal_gap():
+    from types import SimpleNamespace
+    from app.services.market_service import signal_failure
+    primary = SimpleNamespace(indicator_2_params={"near_gap": 5})
+
+    def row(**kw):
+        return [{"is_primary_filter": True, "is_met": False, "break_bars_ago": None, **kw}]
+
+    # ISCTR 25.11: RSI 21.81 under a line at 30.17 -> failed
+    assert signal_failure(row(current_value=21.81, target_value=30.17), primary) == {
+        "fail_rsi": 21.81, "fail_line": 30.17, "fail_gap": 8.36}
+    assert signal_failure(row(current_value=27.0, target_value=30.0), primary) is None  # retest within 5 points
+    assert signal_failure(row(current_value=54.0, target_value=17.0, break_bars_ago=5), primary) is None  # old breakout, still above
+    assert signal_failure(row(is_met=True, current_value=20.0, target_value=30.0), primary) is None
+    assert signal_failure(row(current_value=21.0, target_value=30.0), None) is None

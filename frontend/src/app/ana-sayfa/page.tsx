@@ -283,6 +283,7 @@ export default function DashboardPage() {
               className={mobileListTab === 'rsi' ? '' : 'hidden lg:block'}
               items={rsiPassedList}
               waiting={overview?.primary_waiting ?? []}
+              failed={overview?.primary_failed ?? []}
               info={overview?.primary_filter}
               loading={loadingOverview}
               timeframe={activePrimaryFilterTf}

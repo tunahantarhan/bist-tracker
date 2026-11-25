@@ -1,7 +1,7 @@
 import { Check, Clock3, Minus, X } from 'lucide-react';
 import type { MarketData } from '@/services/api';
 import { tfLabel } from '@/lib/timeframes';
-import { confirmWindowText, formatBarTime, formatUnix } from '@/lib/primaryFilter';
+import { confirmWindowText, failureText, formatBarTime, formatUnix } from '@/lib/primaryFilter';
 
 type StepState = 'done' | 'waiting' | 'failed' | 'off';
 
@@ -56,6 +56,12 @@ export default function PrimarySteps({ data, className = '' }: { data: MarketDat
     rsiStatus = 'Sinyal geldi';
   }
   if (armed) rsiDetail = `Sinyal: ${formatUnix(confirm!.armed_at)}${confirm!.rsi_price != null ? ` · ${price(confirm!.rsi_price)}` : ''}`;
+  const failed = !!confirm?.failed_at;
+  if (failed) {
+    rsiState = 'failed';
+    rsiStatus = `Kırılım bozuldu · ${formatUnix(confirm!.failed_at)}`;
+    rsiDetail = `${failureText(confirm)}. ${rsiDetail ?? ''}`.trim();
+  }
 
   // Step 2: a closed 5m bar above its MA(N), within the waiting window
   let maState: StepState = 'off';
@@ -66,7 +72,11 @@ export default function PrimarySteps({ data, className = '' }: { data: MarketDat
       confirm.last_close != null && confirm.average != null
         ? `Son kapanan mum (${formatBarTime(confirm.last_bar)}): ${price(confirm.last_close)} · ${confirm.label} ${price(confirm.average)}`
         : undefined;
-    if (confirm.confirmed_at) {
+    if (failed) {
+      maState = 'off';
+      maStatus = confirm.confirmed_at ? `${formatBarTime(confirm.confirm_bar)} mumunda teyit almıştı` : 'Sinyal bozulduğu için aranmıyor';
+      maDetail = 'Hisse ana filtre listesinden çıkarıldı; yeni bir RSI kırılımı gelirse süreç baştan başlar.';
+    } else if (confirm.confirmed_at) {
       maState = 'done';
       maStatus = `${formatBarTime(confirm.confirm_bar)} mumu ortalamanın üstünde kapandı`;
       maDetail = `Kapanış ${price(confirm.confirm_close)} > ${confirm.label} ${price(confirm.confirm_average)} · sinyal ${formatUnix(confirm.deadline)} tarihine kadar listede`;

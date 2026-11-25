@@ -159,6 +159,11 @@ export interface PrimaryConfirm {
   confirm_bar?: string | null;
   confirm_close?: number | null;
   confirm_average?: number | null;
+  /** Unix seconds when RSI fell back under the line (signal failed); RSI, line and gap at that moment */
+  failed_at?: number | null;
+  fail_rsi?: number | null;
+  fail_line?: number | null;
+  fail_gap?: number | null;
 }
 
 /** Live settings of both primary filter steps (for the "how it works" texts) */
@@ -306,6 +311,8 @@ export interface MarketOverviewResponse {
   rsi_passed: StockOverviewItem[];
   /** RSI signal given, waiting for a 5m bar to close above the average */
   primary_waiting?: StockOverviewItem[];
+  /** RSI fell back under the trendline after the signal (listed until the window ends) */
+  primary_failed?: StockOverviewItem[];
   primary_filter?: PrimaryFilterInfo | null;
   top_scored: StockOverviewItem[];
   top_priced: StockOverviewItem[];

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bookmark, Clock3, Filter, Loader2, Sparkles, X } from 'lucide-react';
+import { Bookmark, Clock3, Filter, Loader2, Sparkles, TrendingDown, X } from 'lucide-react';
 import type { PrimaryFilterInfo, StockOverviewItem } from '@/services/api';
 import ScoreGauge from '@/components/ui/ScoreGauge';
 import { tfLabel } from '@/lib/timeframes';
@@ -122,9 +122,14 @@ export function WatchlistPanel({
   );
 }
 
+type PrimaryTab = 'passed' | 'waiting' | 'failed';
+
+const LIST_CLASS = 'scrollbar-hide max-h-[260px] divide-y divide-slate-800/60 overflow-y-auto overflow-x-hidden lg:max-h-[340px]';
+
 export function PrimaryFilterPanel({
   items,
   waiting = [],
+  failed = [],
   info,
   loading,
   timeframe,
@@ -135,6 +140,8 @@ export function PrimaryFilterPanel({
   items: StockOverviewItem[];
   /** RSI signal given, waiting for a 5m bar to close above the average */
   waiting?: StockOverviewItem[];
+  /** RSI fell back under the trendline after the signal */
+  failed?: StockOverviewItem[];
   info?: PrimaryFilterInfo | null;
   loading: boolean;
   timeframe: string;
@@ -144,7 +151,20 @@ export function PrimaryFilterPanel({
 }) {
   const [open, setOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [tab, setTab] = useState<PrimaryTab>('passed');
   const steps = primaryFilterSteps(info, tfLabel(timeframe, 'long'));
+  const tabs = [
+    { key: 'passed' as const, label: 'Geçen', count: items.length, icon: Filter, hint: 'İki adımı da tamamlayan hisseler',
+      activeClass: 'bg-amber-500/10 text-amber-300' },
+    { key: 'waiting' as const, label: 'Bekleyen', count: waiting.length, icon: Clock3,
+      hint: 'RSI kırılımı geldi; 5 dakikalık bir mumun ortalamanın üstünde kapanması bekleniyor',
+      activeClass: 'bg-amber-500/10 text-amber-300' },
+    { key: 'failed' as const, label: 'Bozulan', count: failed.length, icon: TrendingDown,
+      hint: 'Sinyalden sonra RSI tekrar trend çizgisinin altına indi; hisse listeden çıkarıldı',
+      activeClass: 'bg-rose-500/10 text-rose-300' },
+  ].filter((t) => t.key === 'passed' || t.count > 0);
+  // an emptied list falls back to the passed tab
+  const view: PrimaryTab = tabs.some((t) => t.key === tab) ? tab : 'passed';
   const confirm = info?.confirm;
 
   return (
@@ -165,11 +185,55 @@ export function PrimaryFilterPanel({
           </div>
         ) : (
           <>
-            {items.length === 0 ? (
-              <EmptyRow>Şu an ana filtreyi geçen hisse yok. Liste her taramada yenilenir.</EmptyRow>
-            ) : (
-              <ul className="scrollbar-hide max-h-[260px] divide-y divide-slate-800/60 overflow-y-auto lg:max-h-[340px]">
-                {items.map((item) => (
+            {tabs.length > 1 && (
+              <div role="tablist" aria-label="Ana filtre listeleri" className="flex gap-1 border-b border-slate-800/70 px-2.5 py-2">
+                {tabs.map((t) => {
+                  const active = t.key === view;
+                  const Icon = t.icon;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setTab(t.key)}
+                      title={t.hint}
+                      className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-data text-[10px] uppercase tracking-wider transition-colors ${
+                        active ? t.activeClass : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'
+                      }`}
+                    >
+                      <Icon className="h-3 w-3" />
+                      {t.label}
+                      <span className={active ? 'opacity-90' : 'text-slate-600'}>{t.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {view === 'passed' &&
+              (items.length === 0 ? (
+                <EmptyRow>Şu an ana filtreyi geçen hisse yok. Liste her taramada yenilenir.</EmptyRow>
+              ) : (
+                <ul className={LIST_CLASS}>
+                  {items.map((item) => (
+                    <SymbolRow
+                      key={item.symbol}
+                      symbol={item.symbol}
+                      name={item.name}
+                      changePct={item.change_pct}
+                      selected={selectedSymbol === item.symbol}
+                      accent="amber"
+                      onSelect={() => onSelect(item.symbol)}
+                      right={<ScoreGauge score={item.score} size="sm" />}
+                    />
+                  ))}
+                </ul>
+              ))}
+
+            {view === 'waiting' && (
+              <ul className={LIST_CLASS}>
+                {waiting.map((item) => (
                   <SymbolRow
                     key={item.symbol}
                     symbol={item.symbol}
@@ -178,22 +242,24 @@ export function PrimaryFilterPanel({
                     selected={selectedSymbol === item.symbol}
                     accent="amber"
                     onSelect={() => onSelect(item.symbol)}
-                    right={<ScoreGauge score={item.score} size="sm" />}
+                    right={
+                      <span className="shrink-0 text-right font-data text-[10px] leading-tight text-slate-500">
+                        {item.primary_confirm?.label ?? 'MA'} bekleniyor
+                        <br />
+                        <span className="text-slate-600">son {formatUnix(item.primary_confirm?.deadline)}</span>
+                      </span>
+                    }
                   />
                 ))}
               </ul>
             )}
 
-            {waiting.length > 0 && (
-              <div className="border-t border-slate-800/70">
-                <p
-                  className="flex items-center gap-1.5 bg-slate-900/40 px-3.5 py-2 font-data text-[10px] uppercase tracking-wider text-slate-500"
-                  title="RSI kırılımı geldi; 5 dakikalık bir mumun ortalamanın üstünde kapanması bekleniyor"
-                >
-                  <Clock3 className="h-3 w-3 text-amber-400/70" /> Teyit bekleyen · {waiting.length}
-                </p>
-                <ul className="scrollbar-hide max-h-[200px] divide-y divide-slate-800/60 overflow-y-auto">
-                  {waiting.map((item) => (
+            {view === 'failed' && (
+              <ul className={LIST_CLASS}>
+                {failed.map((item) => {
+                  const c = item.primary_confirm;
+                  const move = c?.rsi_price ? ((item.current_price - c.rsi_price) / c.rsi_price) * 100 : null;
+                  return (
                     <SymbolRow
                       key={item.symbol}
                       symbol={item.symbol}
@@ -204,15 +270,17 @@ export function PrimaryFilterPanel({
                       onSelect={() => onSelect(item.symbol)}
                       right={
                         <span className="shrink-0 text-right font-data text-[10px] leading-tight text-slate-500">
-                          {item.primary_confirm?.label ?? 'MA'} bekleniyor
+                          RSI çizginin {c?.fail_gap?.toLocaleString('tr-TR', { maximumFractionDigits: 1 }) ?? '—'} puan altında
                           <br />
-                          <span className="text-slate-600">son {formatUnix(item.primary_confirm?.deadline)}</span>
+                          <span className="text-slate-600">
+                            {move != null ? `sinyalden beri ${formatPct(move)}` : `bozuldu ${formatUnix(c?.failed_at)}`}
+                          </span>
                         </span>
                       }
                     />
-                  ))}
-                </ul>
-              </div>
+                  );
+                })}
+              </ul>
             )}
           </>
         )}
@@ -238,8 +306,10 @@ export function PrimaryFilterPanel({
               )}
               <p>
                 {steps.ma
-                  ? 'İki adım tamamlanınca hisse listeye girer ve bildirim gönderilir; bekleme süresi bitene kadar listede kalır. “Teyit bekleyen” hisselerde yalnızca 1. adım tamamdır.'
+                  ? 'İki adım tamamlanınca hisse listeye girer ve bildirim gönderilir; bekleme süresi bitene kadar listede kalır. “Bekleyen” sekmesindeki hisselerde yalnızca 1. adım tamamdır.'
                   : 'Bu adımı geçen hisseler listeye girer ve bildirim gönderilir.'}{' '}
+                RSI sonradan çizginin {(info?.near_gap ?? 0) > 0 ? `${info!.near_gap.toLocaleString('tr-TR')} puandan fazla ` : ''}altına inerse sinyal
+                bozulmuş sayılır ve hisse “Bozulan” sekmesine geçer.{' '}
                 Diğer kurallar yalnızca skoru belirler.
               </p>
             </div>

@@ -7,9 +7,10 @@ type PrimaryState = {
 };
 
 /** Badge text/tone of the primary filter, including the "waiting for the average" step. */
-export function primaryFilterBadge(data: PrimaryState): { label: string; tone: 'passed' | 'waiting' | 'idle' } {
+export function primaryFilterBadge(data: PrimaryState): { label: string; tone: 'passed' | 'waiting' | 'failed' | 'idle' } {
   if (data.primary_filter_passed) return { label: 'Ana filtre geçti', tone: 'passed' };
   const confirm = data.primary_confirm;
+  if (confirm?.failed_at) return { label: 'Sinyal bozuldu', tone: 'failed' };
   if (confirm && (confirm.armed_at || data.primary_rsi_passed)) {
     return { label: `RSI sağlandı · ${confirm.label} teyidi bekleniyor`, tone: 'waiting' };
   }
@@ -19,6 +20,7 @@ export function primaryFilterBadge(data: PrimaryState): { label: string; tone: '
 export const PRIMARY_BADGE_TONES = {
   passed: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
   waiting: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  failed: 'border-rose-500/30 bg-rose-500/10 text-rose-300',
   idle: 'border-slate-700 bg-slate-800/50 text-slate-400',
 } as const;
 
@@ -49,6 +51,12 @@ export function formatBarTime(iso: string | null | undefined): string {
 }
 
 const num = (v: number) => v.toLocaleString('tr-TR', { maximumFractionDigits: 2 });
+
+/** Why a signal failed: "RSI 21,81, çizginin (30,17) 8,36 puan altına indi" */
+export function failureText(confirm: PrimaryConfirm | null | undefined): string {
+  if (!confirm?.failed_at || confirm.fail_rsi == null || confirm.fail_line == null) return 'RSI trend çizgisinin altına döndü';
+  return `RSI ${num(confirm.fail_rsi)}, çizginin (${num(confirm.fail_line)}) ${num(confirm.fail_gap ?? confirm.fail_line - confirm.fail_rsi)} puan altına indi`;
+}
 
 /** Plain-language description of both steps with the live settings (fallbacks = agreed defaults). */
 export function primaryFilterSteps(info: PrimaryFilterInfo | null | undefined, timeframeLong: string) {

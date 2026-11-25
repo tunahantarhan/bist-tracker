@@ -397,7 +397,27 @@ def _confirm_payload(settings: ConfirmSettings, check: dict[str, Any] | None, ar
         "armed_at": arm.get("armed_at"), "deadline": arm.get("deadline"), "rsi_price": arm.get("rsi_price"),
         "confirmed_at": arm.get("confirmed_at"), "confirm_bar": arm.get("confirm_bar"),
         "confirm_close": arm.get("confirm_close"), "confirm_average": arm.get("confirm_average"),
+        "failed_at": arm.get("failed_at"), "fail_rsi": arm.get("fail_rsi"), "fail_line": arm.get("fail_line"),
+        "fail_gap": arm.get("fail_gap"),
     }
+
+
+def signal_failure(breakdown: list[dict[str, Any]] | None, primary: Any | None) -> dict[str, float] | None:
+    """The RSI breakout has failed: RSI is back under the trendline by more than the early-signal
+    gap (`near_gap`, so a retest of the line does not count). Returns RSI, line and the gap."""
+    if primary is None:
+        return None
+    row = next((r for r in breakdown or [] if r.get("is_primary_filter")), None)
+    if row is None or row.get("is_met") or row.get("error") or row.get("break_bars_ago") is not None:
+        return None  # signal valid, or RSI still above the line (an older breakout)
+    rsi, line = row.get("current_value"), row.get("target_value")
+    if rsi is None or line is None:
+        return None
+    gap = float(line) - float(rsi)
+    tolerance = RuleEngine.trendline_params(primary.indicator_2_params)["near_gap"]
+    if gap <= tolerance:
+        return None
+    return {"fail_rsi": round(float(rsi), 2), "fail_line": round(float(line), 2), "fail_gap": round(gap, 2)}
 
 
 def primary_filter_info(primary: Any | None) -> dict[str, Any] | None:
@@ -429,7 +449,9 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
     `confirm_window_sessions` sessions. `primary_filter_passed` becomes True once a 5m bar
     closes above its `confirm_ma_length`-bar average while armed, and stays True for the
     rest of the window (`signal_ttl` lets alerts fire once per arming). Armed stocks that are
-    still waiting for that bar are listed as `primary_waiting`.
+    still waiting for that bar are listed as `primary_waiting`. If RSI falls back under the
+    line (`signal_failure`) the signal is marked failed for the rest of the window and leaves
+    the list (`primary_failed`); a fresh RSI signal re-arms the stock.
     """
     settings = confirm_settings(primary)
     window = settings.window
@@ -443,7 +465,7 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
     for item in items:
         sym = item["symbol"]
         arm = state.get(sym)
-        if item["primary_rsi_passed"] and arm is None:
+        if item["primary_rsi_passed"] and (arm is None or arm.get("failed_at")):
             arm = state[sym] = {
                 "armed_at": now,
                 "deadline": session_close_after(now_tr(), window).timestamp(),
@@ -452,8 +474,12 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
         item["primary_filter_passed"] = False
         if arm is None:
             continue
+        if not arm.get("failed_at"):
+            failure = signal_failure(item.get("rules_breakdown"), primary)
+            if failure:
+                arm.update(failed_at=now, **failure)
         check = await confirm_check(sym, settings, since=arm.get("checked_through"))
-        if check and not arm.get("confirmed_at"):
+        if check and not arm.get("confirmed_at") and not arm.get("failed_at"):
             # earliest bar above the line since the previous scan, else the latest closed bar
             hit = check.get("first_above") or (check if check["above"] else None)
             if hit:
@@ -461,7 +487,7 @@ async def apply_primary_confirmation(items: list[dict[str, Any]], primary: Any |
                            confirm_average=hit["average"])
         if check:
             arm["checked_through"] = check["bar"]
-        item["primary_filter_passed"] = bool(arm.get("confirmed_at"))
+        item["primary_filter_passed"] = bool(arm.get("confirmed_at")) and not arm.get("failed_at")
         item["primary_confirm"] = _confirm_payload(settings, check, arm)
         item["signal_ttl"] = max(60, int(arm["deadline"] - now))
     await CacheService.set_json(ARMED_STATE_KEY, state, expiration=(window + 4) * 86400)
@@ -486,8 +512,15 @@ def _build_payload(items: list[dict[str, Any]], primary_tf: str, quotes: dict[st
         ),
         # RSI signal given, waiting for a 5m bar to close above the average
         "primary_waiting": sorted(
-            [i for i in items if i.get("primary_confirm") and not i["primary_filter_passed"]],
+            [i for i in items if i.get("primary_confirm") and not i["primary_filter_passed"]
+             and not i["primary_confirm"].get("failed_at")],
             key=lambda x: x["score"],
+            reverse=True,
+        ),
+        # RSI fell back under the line after the signal (kept visible until the window ends)
+        "primary_failed": sorted(
+            [i for i in items if (i.get("primary_confirm") or {}).get("failed_at")],
+            key=lambda x: x["primary_confirm"]["failed_at"],
             reverse=True,
         ),
         "top_scored": sorted(items, key=lambda x: (x["score"], x["change_pct"]), reverse=True)[:10],
@@ -630,6 +663,7 @@ def public_overview(payload: dict[str, Any]) -> dict[str, Any]:
         "items": slim(payload.get("items", [])),
         "rsi_passed": slim(payload.get("rsi_passed", [])),
         "primary_waiting": slim(payload.get("primary_waiting", [])),
+        "primary_failed": slim(payload.get("primary_failed", [])),
         "top_scored": slim(payload.get("top_scored", [])),
         "top_priced": slim(payload.get("top_priced", [])),
     }
@@ -971,7 +1005,7 @@ async def get_symbol_detail(
     )
     body["primary_rsi_passed"] = body["primary_filter_passed"]
     if confirm is not None:  # second step enabled: the filter passes once the average is crossed
-        body["primary_filter_passed"] = bool(confirm["confirmed_at"])
+        body["primary_filter_passed"] = bool(confirm["confirmed_at"]) and not confirm["failed_at"]
         body["primary_confirm"] = confirm
     price = price_of_record(quote, frames.get("1d"), chart_df)
 
