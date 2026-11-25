@@ -128,6 +128,22 @@
   html {
     @apply font-sans;
   }
+  /* Desktop density: rem-based sizes render at 90% (what the browser shows at 90% zoom).
+     Phones and tablets keep 16px, which also stops iOS zooming into focused inputs. */
+  @media (min-width: 1280px) {
+    html {
+      font-size: 90%;
+    }
+  }
+}
+
+/* Scrollable but without a visible scrollbar (lists, tab strips); used across the app */
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Special Scrollbar Design */

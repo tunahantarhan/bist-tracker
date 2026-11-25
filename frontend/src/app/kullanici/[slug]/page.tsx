@@ -267,7 +267,7 @@ function ProfileConsole() {
           <>
             <ProfileHero profile={profile} stats={stats} onNavigate={navigate} />
 
-            <div role="tablist" aria-label="Profil bölümleri" className="-mx-4 flex gap-1 overflow-x-auto border-b border-slate-800/80 px-4 md:mx-0 md:px-0">
+            <div role="tablist" aria-label="Profil bölümleri" className="scrollbar-hide -mx-4 flex gap-1 overflow-x-auto border-b border-slate-800/80 px-4 md:mx-0 md:px-0">
               {TABS.map((t) => {
                 const active = tab === t.key;
                 const badge = t.key === 'alarmlar' ? stats.totalAlerts : t.key === 'bildirimler' ? stats.unread : 0;

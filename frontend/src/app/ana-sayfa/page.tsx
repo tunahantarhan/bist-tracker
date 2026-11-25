@@ -245,7 +245,7 @@ export default function DashboardPage() {
         <MarketPulse overview={overview} />
 
         <div className="flex flex-col items-start gap-5 lg:flex-row">
-          <aside className="w-full shrink-0 space-y-4 lg:w-80">
+          <aside className="w-full shrink-0 space-y-4 lg:w-[320px]">
             {/* Mobile list switcher */}
             <div role="tablist" className="grid grid-cols-2 gap-1 rounded-xl border border-slate-800/80 bg-[#12161f] p-1 lg:hidden">
               {(

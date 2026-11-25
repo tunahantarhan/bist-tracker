@@ -49,7 +49,11 @@ export function PanelHeader({
         )}
         <div className="min-w-0 text-left">
           <Eyebrow className="text-slate-300">{title}</Eyebrow>
-          {subtitle && <p className="mt-0.5 truncate text-[11px] text-slate-500">{subtitle}</p>}
+          {subtitle && (
+            <p className="mt-0.5 truncate text-[11px] text-slate-500" title={typeof subtitle === 'string' ? subtitle : undefined}>
+              {subtitle}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
